@@ -17,17 +17,30 @@ jobs:
   macos:
     name: Swift tests (macOS)
     runs-on: macos-15
+    # Hard ceiling on the whole job. Normal green run is ~3 min; anything
+    # past this means a regression introduced a hang (e.g. a test that
+    # forces `insertRows(0..<1M)` on a detached NSTableView).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: latest-stable
-      - run: swift build
-      - run: swift test
+      - name: Swift build
+        timeout-minutes: 10
+        run: swift build
+      - name: Swift test
+        timeout-minutes: 15
+        run: swift test
 
   ios:
     name: iOS ${{ matrix.ios_label }} (Xcode ${{ matrix.xcode }})
     runs-on: macos-15
+    # Simulator boot + first-run compile eats 3-5 min before the tests
+    # even start; the tests themselves are ~2 min. 40 min leaves
+    # headroom for cold runners / slow simulator boots without masking
+    # a hang.
+    timeout-minutes: 40
     strategy:
       # Keep both jobs going so a regression on one iOS surface doesn't mask
       # another.
@@ -57,8 +70,15 @@ jobs:
 
       # Functional + performance gates. Skip trend-only benchmarks (their
       # relative-SD is too high for a stable gate).
+      #
+      # `-test-timeouts-enabled YES` + a default 120-second per-test
+      # allowance makes a hung XCTest fail the whole step fast, rather
+      # than waiting for the step- or job-level timeout to kick in
+      # 20+ minutes later. Individual gates can still override this
+      # with `executionTimeAllowance`.
       - name: Run tests
         id: tests
+        timeout-minutes: 30
         run: |
           set -o pipefail
           xcodebuild test \
@@ -67,6 +87,9 @@ jobs:
             -skip-testing:VirtualListTests/VirtualListBenchmarks \
             -skip-testing:VirtualListTests/ListVsVirtualListBenchmarks \
             -resultBundlePath TestResults.xcresult \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 300 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
@@ -104,6 +127,7 @@ jobs:
   demo:
     name: Demo app (${{ matrix.platform_label }})
     runs-on: macos-15
+    timeout-minutes: 20
     strategy:
       # Demo is a single source tree that must compile for both iOS and
       # macOS. Keep both legs alive so a regression on one platform
@@ -121,6 +145,7 @@ jobs:
         with:
           xcode-version: latest-stable
       - name: Build demo
+        timeout-minutes: 15
         run: |
           set -o pipefail
           xcodebuild build \
