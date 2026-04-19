@@ -225,6 +225,42 @@ extension VirtualListRow {
       VirtualListRowSlotModifier(value: view, slot: \VirtualListRowBox.badge)
     )
   }
+
+  /// Row-level tint. Mirrors `SwiftUI.View.listItemTint(_:)` for the
+  /// `Color?` overload. Inside `VirtualList`, a row's content is hosted
+  /// through `UIHostingConfiguration` / `NSHostingView`, so
+  /// `SwiftUI.List`'s private `.listItemTint` environment key doesn't
+  /// reach it — calling the `View` version would compile silently and
+  /// do nothing. Forwarding to `.tint(_:)` instead threads the value
+  /// through the SwiftUI content tree so inline symbols, badges, and
+  /// any `.tint`-consuming child pick it up.
+  public func listItemTint(_ tint: Color?) -> some View {
+    _VirtualListRowAsView(row: self).tint(tint)
+  }
+
+  /// Row-level context menu. Mirrors
+  /// `SwiftUI.View.contextMenu(menuItems:)`. The redeclaration at the
+  /// `VirtualListRow` level guards against a future protocol extension
+  /// accidentally shadowing `SwiftUI.View.contextMenu` — the forward
+  /// below is explicit about hitting `View`'s implementation rather
+  /// than looping through this extension.
+  public func contextMenu<MenuItems: View>(
+    @ViewBuilder menuItems: () -> MenuItems
+  ) -> some View {
+    let items = menuItems()
+    return _VirtualListRowAsView(row: self).contextMenu { items }
+  }
+}
+
+/// Explicit `View` wrapper around a `VirtualListRow`. Forwarding
+/// extensions (`.listItemTint`, `.contextMenu`) use this to escape the
+/// protocol's method-lookup preference and dispatch to
+/// `SwiftUI.View`'s implementation — without the wrapper, calling
+/// `self.tint(...)` from inside a `VirtualListRow` extension would be
+/// ambiguous if the protocol ever grew a `.tint` method.
+private struct _VirtualListRowAsView<Row: VirtualListRow>: View {
+  let row: Row
+  var body: some View { row }
 }
 
 // MARK: - iOS-only: per-row swipe actions

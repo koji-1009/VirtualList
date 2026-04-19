@@ -71,12 +71,14 @@
     /// All per-IndexPath state for row-level modifiers lives in these
     /// dicts. Each is populated lazily when the owning modifier's
     /// `.onAppear` fires, and cleared on structural apply so stale
-    /// IndexPaths do not survive a reorder / insert.
-    private var perRowBoxes: [IndexPath: VirtualListRowBox] = [:]
-    private var perRowBackgroundHosts: [IndexPath: UIHostingController<AnyView>] = [:]
-    private var perRowInsets: [IndexPath: EdgeInsets] = [:]
-    private var perRowSeparatorVisibility: [IndexPath: VirtualListRowSeparatorVisibility] = [:]
-    private var perRowBadgeHosts: [IndexPath: UIHostingController<AnyView>] = [:]
+    /// IndexPaths do not survive a reorder / insert. `internal` so
+    /// `@testable`-importing tests can inspect them directly — there
+    /// is no reason to wrap them in `debug_*` accessors.
+    var perRowBoxes: [IndexPath: VirtualListRowBox] = [:]
+    var perRowBackgroundHosts: [IndexPath: UIHostingController<AnyView>] = [:]
+    var perRowInsets: [IndexPath: EdgeInsets] = [:]
+    var perRowSeparatorVisibility: [IndexPath: VirtualListRowSeparatorVisibility] = [:]
+    var perRowBadgeHosts: [IndexPath: UIHostingController<AnyView>] = [:]
 
     /// Benchmark / test entry-point used via `@testable import` to pick the
     /// data-source strategy before calling `install(on:)`. Normal callers set
@@ -154,13 +156,6 @@
       resolveFocusBinder()
     }
 
-    /// Test / benchmark hook — returns the per-row box attached to the
-    /// given IndexPath, or `nil` if none was provisioned. Reachable via
-    /// `@testable import`.
-    func debug_perRowBox(for indexPath: IndexPath) -> VirtualListRowBox? {
-      perRowBoxes[indexPath]
-    }
-
     /// Allocates (or returns) the per-row box for an IndexPath. Called
     /// from a row modifier's `.onAppear` via the environment-injected
     /// `VirtualListRowBoxProvider`. The heavy work — class allocation,
@@ -186,14 +181,6 @@
       }
       perRowBoxes[indexPath] = fresh
       return fresh
-    }
-
-    /// Test hook exposing the insets the coordinator has cached for a
-    /// given IndexPath. Matches the value applied via
-    /// `UIHostingConfiguration.margins` on the cell's hosting
-    /// configuration.
-    func debug_perRowInsets(at indexPath: IndexPath) -> EdgeInsets? {
-      perRowInsets[indexPath]
     }
 
     /// Returns the swipe-actions configuration written by a per-row
@@ -608,22 +595,6 @@
       perRowSeparatorVisibility[indexPath]
     }
 
-    /// Test hook exposing the cached separator visibility at an
-    /// IndexPath. Reachable via `@testable import`.
-    func debug_perRowSeparatorVisibility(
-      at indexPath: IndexPath
-    ) -> VirtualListRowSeparatorVisibility? {
-      perRowSeparatorVisibility[indexPath]
-    }
-
-    /// Test hook exposing the hosting controller backing the cached
-    /// badge at an IndexPath. Reachable via `@testable import`.
-    func debug_perRowBadgeHost(
-      at indexPath: IndexPath
-    ) -> UIHostingController<AnyView>? {
-      perRowBadgeHosts[indexPath]
-    }
-
     private func makeHeaderRegistration()
       -> UICollectionView.SupplementaryRegistration<UICollectionViewListCell>
     {
@@ -951,6 +922,24 @@
       var current = box.read()
       if let id = itemID(at: indexPath) { current.remove(id) }
       box.write(current)
+    }
+
+    /// Frees the heavy per-IndexPath state when a cell leaves the
+    /// viewport. Without this hook, scrolling through a large list
+    /// monotonically grows `perRowBoxes` and the two hosting-controller
+    /// dicts — 100k scrolled rows would keep 100k of each alive until
+    /// the next structural apply. The lightweight value caches
+    /// (`perRowInsets`, `perRowSeparatorVisibility`) stay so a scroll-
+    /// back doesn't flicker through the default margins / separator
+    /// between re-dequeue and the modifier's `.onAppear`.
+    public func collectionView(
+      _: UICollectionView,
+      didEndDisplaying _: UICollectionViewCell,
+      forItemAt indexPath: IndexPath
+    ) {
+      perRowBoxes.removeValue(forKey: indexPath)
+      perRowBackgroundHosts.removeValue(forKey: indexPath)
+      perRowBadgeHosts.removeValue(forKey: indexPath)
     }
   }
 

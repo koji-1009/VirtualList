@@ -65,11 +65,13 @@
     /// apply. The cached views/insets/visibility are re-applied on
     /// cell re-configuration so a row scrolled back into view doesn't
     /// flicker through the default.
-    private var perRowBoxes: [IndexPath: VirtualListRowBox] = [:]
-    private var perRowBackgroundViews: [IndexPath: AnyView] = [:]
-    private var perRowInsets: [IndexPath: EdgeInsets] = [:]
-    private var perRowBadgeViews: [IndexPath: AnyView] = [:]
-    private var perRowSeparatorVisibility: [IndexPath: VirtualListRowSeparatorVisibility] = [:]
+    // `internal` (no access modifier) so `@testable` tests can read
+    // these directly. There's no production caller outside the class.
+    var perRowBoxes: [IndexPath: VirtualListRowBox] = [:]
+    var perRowBackgroundViews: [IndexPath: AnyView] = [:]
+    var perRowInsets: [IndexPath: EdgeInsets] = [:]
+    var perRowBadgeViews: [IndexPath: AnyView] = [:]
+    var perRowSeparatorVisibility: [IndexPath: VirtualListRowSeparatorVisibility] = [:]
 
     /// Increments each time the cell registration builds a cell. Exposed to
     /// tests / benchmarks via `@testable import`; not part of the public API.
@@ -420,31 +422,6 @@
     }
 
     // MARK: - Per-row modifier plumbing (macOS)
-
-    /// Test hooks — reachable via `@testable import` so the plumbing
-    /// can be exercised end-to-end without standing up a real SwiftUI
-    /// host. Not part of the public API.
-    func debug_perRowBox(at indexPath: IndexPath) -> VirtualListRowBox? {
-      perRowBoxes[indexPath]
-    }
-
-    func debug_perRowBackgroundView(at indexPath: IndexPath) -> AnyView? {
-      perRowBackgroundViews[indexPath]
-    }
-
-    func debug_perRowBadgeView(at indexPath: IndexPath) -> AnyView? {
-      perRowBadgeViews[indexPath]
-    }
-
-    func debug_perRowInsets(at indexPath: IndexPath) -> EdgeInsets? {
-      perRowInsets[indexPath]
-    }
-
-    func debug_perRowSeparatorVisibility(
-      at indexPath: IndexPath
-    ) -> VirtualListRowSeparatorVisibility? {
-      perRowSeparatorVisibility[indexPath]
-    }
 
     /// Allocates (or returns) the per-row box for an IndexPath. Called
     /// from a row modifier's `.onAppear` via the environment-injected
@@ -830,6 +807,27 @@
       else { return }
       let selectedIDs = Set(tableView.selectedRowIndexes.compactMap { itemID(atRow: $0) })
       box.write(selectedIDs)
+    }
+
+    /// Frees the heavy per-IndexPath state when a row leaves the
+    /// viewport. Mirrors the iOS `didEndDisplaying` hook: without
+    /// cleanup, scrolling through a 100k-row table keeps one
+    /// `VirtualListRowBox` plus up to two `NSHostingView` roots alive
+    /// per scrolled IndexPath until the next structural apply. The
+    /// lightweight value caches (`perRowInsets`,
+    /// `perRowSeparatorVisibility`) are left in place so a scroll-back
+    /// redraws without flickering through default margins / separators
+    /// between re-dequeue and the modifier's `.onAppear`.
+    public func tableView(
+      _: NSTableView,
+      didRemove _: NSTableRowView,
+      forRow row: Int
+    ) {
+      guard case let .item(section, index) = rowKind(at: row) else { return }
+      let indexPath = IndexPath(item: index, section: section)
+      perRowBoxes.removeValue(forKey: indexPath)
+      perRowBackgroundViews.removeValue(forKey: indexPath)
+      perRowBadgeViews.removeValue(forKey: indexPath)
     }
   }
 

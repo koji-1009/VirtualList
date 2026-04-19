@@ -118,6 +118,31 @@ struct VirtualListRowProtocolTests {
       _ = wrapped
     }
   #endif
+
+  // The two modifiers below are cross-platform drop-ins kept outside
+  // the UIKit gate so native-macOS builds also cover the dispatch
+  // path. They forward to SwiftUI's `.tint` / `.contextMenu` via an
+  // explicit `View` wrapper — these compile-level assertions guard
+  // against a regression where a `VirtualListRow` extension shadows
+  // SwiftUI's version and the forward loops back into itself.
+  @Test func listItemTintExtensionIsCallableOnRow() {
+    let wrapped = VirtualListRowContainer { Text("x") }.listItemTint(.red)
+    _ = wrapped
+  }
+
+  @Test func listItemTintAcceptsNilToClear() {
+    let wrapped = VirtualListRowContainer { Text("x") }.listItemTint(nil)
+    _ = wrapped
+  }
+
+  @Test func contextMenuExtensionIsCallableOnRow() {
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .contextMenu {
+        Button("Delete", role: .destructive) {}
+        Button("Rename") {}
+      }
+    _ = wrapped
+  }
 }
 
 #if canImport(UIKit)
@@ -155,7 +180,7 @@ struct VirtualListRowProtocolTests {
       cv.layoutIfNeeded()
 
       let indexPath = IndexPath(item: 0, section: 0)
-      #expect(coord.debug_perRowBox(for: indexPath) == nil)
+      #expect(coord.perRowBoxes[indexPath] == nil)
 
       let box = coord.ensureRowBox(at: indexPath)
       box.trailingSwipeActions = [
@@ -181,7 +206,7 @@ struct VirtualListRowProtocolTests {
 
       let indexPath = IndexPath(item: 0, section: 0)
       // Box allocation is lazy — nothing was allocated yet.
-      #expect(coord.debug_perRowBox(for: indexPath) == nil)
+      #expect(coord.perRowBoxes[indexPath] == nil)
 
       // Simulating the modifier's `.onAppear` forces the provider to
       // allocate a box for this IndexPath. After that, committing an
@@ -192,7 +217,7 @@ struct VirtualListRowProtocolTests {
 
       let insets = EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
       box.insets.commit(insets)
-      #expect(coord.debug_perRowInsets(at: indexPath) == insets)
+      #expect(coord.perRowInsets[indexPath] == insets)
     }
 
     @Test func applyRowInsetsClearsOnNil() {
@@ -206,11 +231,11 @@ struct VirtualListRowProtocolTests {
       let box = coord.ensureRowBox(at: indexPath)
       let insets = EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
       box.insets.commit(insets)
-      #expect(coord.debug_perRowInsets(at: indexPath) == insets)
+      #expect(coord.perRowInsets[indexPath] == insets)
 
       // Explicit nil clears the cached value.
       box.insets.commit(nil)
-      #expect(coord.debug_perRowInsets(at: indexPath) == nil)
+      #expect(coord.perRowInsets[indexPath] == nil)
     }
 
     @Test func structuralApplyClearsPerRowBoxes() {
@@ -229,7 +254,7 @@ struct VirtualListRowProtocolTests {
       // A structural change invalidates the dict — stale IndexPaths
       // shouldn't survive an insert / reorder.
       coord.apply(sections: [syntheticSection(count: 5)], animated: false)
-      #expect(coord.debug_perRowBox(for: indexPath) == nil)
+      #expect(coord.perRowBoxes[indexPath] == nil)
     }
 
     @Test func applyRowSeparatorVisibilityCachesValuePerIndexPath() {
@@ -240,14 +265,14 @@ struct VirtualListRowProtocolTests {
       cv.layoutIfNeeded()
 
       let indexPath = IndexPath(item: 0, section: 0)
-      #expect(coord.debug_perRowSeparatorVisibility(at: indexPath) == nil)
+      #expect(coord.perRowSeparatorVisibility[indexPath] == nil)
 
       let box = coord.ensureRowBox(at: indexPath)
       #expect(box.separator.value == nil)
 
       let override = VirtualListRowSeparatorVisibility(top: .hidden, bottom: .hidden)
       box.separator.commit(override)
-      #expect(coord.debug_perRowSeparatorVisibility(at: indexPath) == override)
+      #expect(coord.perRowSeparatorVisibility[indexPath] == override)
     }
 
     @Test func applyRowSeparatorVisibilityClearsOnNil() {
@@ -261,11 +286,11 @@ struct VirtualListRowProtocolTests {
       let box = coord.ensureRowBox(at: indexPath)
       let override = VirtualListRowSeparatorVisibility(top: .hidden, bottom: .hidden)
       box.separator.commit(override)
-      #expect(coord.debug_perRowSeparatorVisibility(at: indexPath) == override)
+      #expect(coord.perRowSeparatorVisibility[indexPath] == override)
 
       // Explicit nil clears the cached override.
       box.separator.commit(nil)
-      #expect(coord.debug_perRowSeparatorVisibility(at: indexPath) == nil)
+      #expect(coord.perRowSeparatorVisibility[indexPath] == nil)
     }
 
     @Test func rowSeparatorVisibilityReturnsCachedValue() {
@@ -295,11 +320,11 @@ struct VirtualListRowProtocolTests {
       cv.layoutIfNeeded()
 
       let indexPath = IndexPath(item: 0, section: 0)
-      #expect(coord.debug_perRowBadgeHost(at: indexPath) == nil)
+      #expect(coord.perRowBadgeHosts[indexPath] == nil)
 
       let box = coord.ensureRowBox(at: indexPath)
       box.badge.commit(AnyView(Text("5")))
-      #expect(coord.debug_perRowBadgeHost(at: indexPath) != nil)
+      #expect(coord.perRowBadgeHosts[indexPath] != nil)
     }
 
     @Test func applyRowBadgeClearsHostOnNil() {
@@ -312,10 +337,10 @@ struct VirtualListRowProtocolTests {
       let indexPath = IndexPath(item: 0, section: 0)
       let box = coord.ensureRowBox(at: indexPath)
       box.badge.commit(AnyView(Text("5")))
-      #expect(coord.debug_perRowBadgeHost(at: indexPath) != nil)
+      #expect(coord.perRowBadgeHosts[indexPath] != nil)
 
       box.badge.commit(nil)
-      #expect(coord.debug_perRowBadgeHost(at: indexPath) == nil)
+      #expect(coord.perRowBadgeHosts[indexPath] == nil)
     }
 
     @Test func applyRowBadgeReusesExistingHostOnUpdate() {
@@ -332,11 +357,11 @@ struct VirtualListRowProtocolTests {
       let indexPath = IndexPath(item: 0, section: 0)
       let box = coord.ensureRowBox(at: indexPath)
       box.badge.commit(AnyView(Text("5")))
-      let first = coord.debug_perRowBadgeHost(at: indexPath)
+      let first = coord.perRowBadgeHosts[indexPath]
       #expect(first != nil)
 
       box.badge.commit(AnyView(Text("9")))
-      let second = coord.debug_perRowBadgeHost(at: indexPath)
+      let second = coord.perRowBadgeHosts[indexPath]
       #expect(second === first)
     }
 
@@ -350,10 +375,10 @@ struct VirtualListRowProtocolTests {
       let indexPath = IndexPath(item: 0, section: 0)
       let box = coord.ensureRowBox(at: indexPath)
       box.badge.commit(AnyView(Text("5")))
-      #expect(coord.debug_perRowBadgeHost(at: indexPath) != nil)
+      #expect(coord.perRowBadgeHosts[indexPath] != nil)
 
       coord.apply(sections: [syntheticSection(count: 5)], animated: false)
-      #expect(coord.debug_perRowBadgeHost(at: indexPath) == nil)
+      #expect(coord.perRowBadgeHosts[indexPath] == nil)
     }
   }
 
@@ -457,6 +482,166 @@ struct VirtualListRowProtocolTests {
       list.applyEditMode(to: cv, from: env)
 
       #expect(cv.isEditing == false)
+    }
+  }
+
+  /// Per-IndexPath dicts on the coordinator are populated while a cell
+  /// is on screen. Without a cleanup hook, scrolling 100k rows once
+  /// would leave 100k entries in `perRowBoxes` (and up to two
+  /// `UIHostingController`s per entry) alive until the next structural
+  /// apply. The coordinator's `didEndDisplaying` delegate hook is what
+  /// bounds this growth — these tests lock that contract in.
+  @Suite("Per-row cache cleanup on cell eviction (iOS)")
+  @MainActor
+  struct PerRowCacheCleanupTests {
+    @Test func didEndDisplayingDropsHeavyPerRowState() {
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      box.background.commit(AnyView(Color.blue))
+      box.badge.commit(AnyView(Text("5")))
+      #expect(coord.perRowBoxes[indexPath] != nil)
+      #expect(coord.perRowBackgroundHosts[indexPath] != nil)
+      #expect(coord.perRowBadgeHosts[indexPath] != nil)
+
+      coord.collectionView(
+        cv,
+        didEndDisplaying: UICollectionViewCell(frame: .zero),
+        forItemAt: indexPath
+      )
+
+      #expect(coord.perRowBoxes[indexPath] == nil)
+      #expect(coord.perRowBackgroundHosts[indexPath] == nil)
+      #expect(coord.perRowBadgeHosts[indexPath] == nil)
+    }
+
+    @Test func didEndDisplayingKeepsLightweightValueCaches() {
+      // Insets and separator-visibility are plain values, cheap to keep
+      // and cheap to re-read. Dropping them on scroll-off would make a
+      // scroll-back flash through the default margins before the
+      // `.onAppear` modifier re-commits — keep the contract visible.
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      let insets = EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+      let separator = VirtualListRowSeparatorVisibility(top: .hidden, bottom: .hidden)
+      box.insets.commit(insets)
+      box.separator.commit(separator)
+
+      coord.collectionView(
+        cv,
+        didEndDisplaying: UICollectionViewCell(frame: .zero),
+        forItemAt: indexPath
+      )
+
+      #expect(coord.perRowInsets[indexPath] == insets)
+      #expect(coord.perRowSeparatorVisibility[indexPath] == separator)
+    }
+  }
+
+  /// Reorder surfaces two concerns that this suite locks in:
+  ///  1. Accessory composition: when `.onMove` is set AND a row has a
+  ///     badge, both accessories must be present on the cell. A prior
+  ///     regression stamped `cell.accessories = [badge]` from the
+  ///     badge-commit path, silently wiping the reorder handle.
+  ///  2. Delegate forwarding: `canMoveItemAt` / `moveItemAt:to:` are
+  ///     the data-source hooks UIKit calls at drag-end; these must
+  ///     gate on the presence of `onMove` and forward to the caller's
+  ///     closure.
+  @Suite("Reorder wiring (iOS)")
+  @MainActor
+  struct ReorderWiringTests {
+    @Test func canMoveGatedOnOnMovePresence() {
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      #expect(coord.collectionView(cv, canMoveItemAt: indexPath) == false)
+
+      var config = VirtualListConfiguration()
+      config.onMove = { _, _ in }
+      coord.configuration = config
+      #expect(coord.collectionView(cv, canMoveItemAt: indexPath) == true)
+    }
+
+    @Test func moveItemForwardsSourceAndDestinationToCaller() {
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 5)], animated: false)
+
+      var received: (IndexPath, IndexPath)?
+      var config = VirtualListConfiguration()
+      config.onMove = { src, dst in received = (src, dst) }
+      coord.configuration = config
+
+      let src = IndexPath(item: 0, section: 0)
+      let dst = IndexPath(item: 3, section: 0)
+      coord.collectionView(cv, moveItemAt: src, to: dst)
+
+      #expect(received?.0 == src)
+      #expect(received?.1 == dst)
+    }
+
+    @Test func reorderAndBadgeAccessoriesCoexistOnSameCell() {
+      // Config must be set before `install`: `canReorderItem` in the
+      // reorderingHandlers closes over `onMove` through `self?.configuration`
+      // — the accessory path separately reads `configuration.onMove`, so
+      // setting it before the first cell-configure keeps both surfaces
+      // aligned from the start.
+      let coord = VirtualListPlatformCoordinator()
+      var config = VirtualListConfiguration()
+      config.onMove = { _, _ in }
+      coord.configuration = config
+
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      box.badge.commit(AnyView(Text("5")))
+
+      guard let cell = cv.cellForItem(at: indexPath) as? UICollectionViewListCell else {
+        Issue.record("Cell missing after layoutIfNeeded")
+        return
+      }
+      // Badge + reorder = 2 trailing accessories. A regression that
+      // restamps only `[badge]` would show 1 here.
+      #expect(cell.accessories.count == 2)
+    }
+
+    @Test func badgeAloneDoesNotInstallReorderAccessory() {
+      // Control test for the suite above: without `onMove`, committing
+      // a badge leaves exactly one accessory on the cell.
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      box.badge.commit(AnyView(Text("5")))
+
+      guard let cell = cv.cellForItem(at: indexPath) as? UICollectionViewListCell else {
+        Issue.record("Cell missing after layoutIfNeeded")
+        return
+      }
+      #expect(cell.accessories.count == 1)
     }
   }
 #endif
