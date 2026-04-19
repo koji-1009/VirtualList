@@ -247,14 +247,6 @@ extension VirtualListRow {
   ///     coordinator can set `cell.tintColor`, which is what the
   ///     UIKit-drawn reorder handle and default swipe-action icons
   ///     read from.
-  ///
-  /// The `ListItemTint?` overload is deliberately not shadowed — it
-  /// would leak `.monochrome` / `.preferred(Color)` through an opaque
-  /// value we can't unpack. Callers who type `.listItemTint(.red)`
-  /// land on the `Color?` overload via overload resolution;
-  /// `.listItemTint(.monochrome)` falls through to SwiftUI's View
-  /// version, which is a silent no-op inside `VirtualList`. Prefer
-  /// the `Color?` form.
   public func listItemTint(_ tint: Color?) -> some View {
     let content = _VirtualListRowAsView(row: self).tint(tint)
     #if canImport(UIKit)
@@ -264,6 +256,37 @@ extension VirtualListRow {
     #else
       return content
     #endif
+  }
+
+  /// `VirtualListItemTint` mirror of SwiftUI's `ListItemTint`. Lets
+  /// callers keep the `.fixed(_:)` / `.preferred(_:)` / `.monochrome`
+  /// call-site ergonomics without depending on SwiftUI's opaque
+  /// struct. Routes through the `Color?` overload above so the per-
+  /// row box path is single-sourced. `.monochrome` collapses to
+  /// `nil`, which clears any row-level tint and leaves the system /
+  /// parent-supplied colour in place.
+  public func listItemTint(_ tint: VirtualListItemTint?) -> some View {
+    listItemTint(tint?.resolvedColor)
+  }
+
+  /// Defence-in-depth against an explicitly-typed
+  /// `SwiftUI.ListItemTint?` argument: without this shadow a call
+  /// site like `row.listItemTint(ListItemTint.monochrome)` would
+  /// bind to `SwiftUI.View.listItemTint(_:)` and silently no-op
+  /// inside our hosted content. Marking the overload unavailable
+  /// turns that path into a compile error with a direct pointer at
+  /// `VirtualListItemTint`. Dot-syntax calls like
+  /// `.listItemTint(.monochrome)` already land on the
+  /// `VirtualListItemTint?` overload via protocol-specificity, so
+  /// this only fires on the rare explicit form.
+  @available(
+    *, unavailable,
+    message:
+      "SwiftUI.ListItemTint is opaque inside VirtualList. Use VirtualListItemTint instead — it mirrors .fixed / .preferred / .monochrome."
+  )
+  public func listItemTint(_ tint: ListItemTint?) -> some View {
+    _ = tint
+    return _VirtualListRowAsView(row: self)
   }
 
   /// Row-level context menu. Mirrors
@@ -306,6 +329,35 @@ extension VirtualListRow {
 private struct _VirtualListRowAsView<Row: VirtualListRow>: View {
   let row: Row
   var body: some View { row }
+}
+
+/// Local mirror of `SwiftUI.ListItemTint` — the SwiftUI type is an
+/// opaque struct with no public accessors, so we cannot unpack a
+/// user-supplied `ListItemTint` without runtime reflection into
+/// private fields. Providing this enum lets call sites keep the
+/// `.fixed(_:)` / `.preferred(_:)` / `.monochrome` ergonomics while
+/// we receive a value we can pattern-match on.
+///
+/// Semantic mapping inside `VirtualList`:
+///   - `.fixed(Color)` and `.preferred(Color)` both resolve to the
+///     carried `Color` — `VirtualList`'s tint pipeline has a single
+///     slot, and no public signal distinguishes "always use this
+///     tint" from "use this unless a parent overrides", so we apply
+///     both the same way.
+///   - `.monochrome` resolves to `nil`, clearing any row-level tint
+///     and letting the system default or a surrounding `.tint(_:)`
+///     show through.
+public enum VirtualListItemTint: Sendable, Equatable {
+  case fixed(Color)
+  case preferred(Color)
+  case monochrome
+
+  var resolvedColor: Color? {
+    switch self {
+    case .fixed(let color), .preferred(let color): color
+    case .monochrome: nil
+    }
+  }
 }
 
 // MARK: - iOS-only: per-row swipe actions

@@ -131,8 +131,42 @@ struct VirtualListRowProtocolTests {
   }
 
   @Test func listItemTintAcceptsNilToClear() {
-    let wrapped = VirtualListRowContainer { Text("x") }.listItemTint(nil)
+    // `nil` is ambiguous between the `Color?` and
+    // `VirtualListItemTint?` overloads — annotate the literal so
+    // overload resolution is unambiguous at the call site.
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .listItemTint(nil as Color?)
     _ = wrapped
+  }
+
+  // VirtualListItemTint cases travel the same pipeline as the `Color?`
+  // overload — `.fixed(_:)` / `.preferred(_:)` collapse to the carried
+  // Color; `.monochrome` collapses to `nil`. These tests pin the
+  // call-site dispatch (protocol-specificity keeps us on the
+  // `VirtualListItemTint?` overload rather than SwiftUI's opaque one)
+  // plus the semantic mapping.
+  @Test func virtualListItemTintFixedCallable() {
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .listItemTint(.fixed(.red))
+    _ = wrapped
+  }
+
+  @Test func virtualListItemTintPreferredCallable() {
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .listItemTint(.preferred(.blue))
+    _ = wrapped
+  }
+
+  @Test func virtualListItemTintMonochromeCallable() {
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .listItemTint(.monochrome)
+    _ = wrapped
+  }
+
+  @Test func virtualListItemTintMapsFixedAndPreferredToCarriedColor() {
+    #expect(VirtualListItemTint.fixed(.red).resolvedColor == Color.red)
+    #expect(VirtualListItemTint.preferred(.blue).resolvedColor == Color.blue)
+    #expect(VirtualListItemTint.monochrome.resolvedColor == nil)
   }
 
   @Test func contextMenuExtensionIsCallableOnRow() {
