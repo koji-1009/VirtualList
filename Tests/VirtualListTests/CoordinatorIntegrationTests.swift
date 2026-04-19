@@ -176,7 +176,11 @@ struct CoordinatorIntegrationTests {
     #expect(second == .unchanged)
 
     let third = coord.apply(sections: [syntheticSection(count: 11)], animated: false)
-    #expect(third == .incremental)
+    // `.indexed` classifies pure tail inserts as `.tailIncremental` so the
+    // representable's `reconfigureVisibleCells` step can be skipped —
+    // existing visible rows keep their IndexPaths, so their content is
+    // still correct for the new data without rebuild.
+    #expect(third == .tailIncremental)
 
     // Non-tail structural change (swap for a section with a different id)
     // forces a full reload.

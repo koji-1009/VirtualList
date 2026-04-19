@@ -347,7 +347,7 @@
       } else {
         UIView.performWithoutAnimation(apply)
       }
-      return .incremental
+      return .tailIncremental
     }
 
     private enum TailDelta {
@@ -420,25 +420,35 @@
       // Inject the provider so row modifiers can lazily allocate their
       // box on the first `.onAppear`. Rows with no modifier keep the
       // box path dormant.
+      //
+      // Each branch builds its own typed `UIHostingConfiguration` and
+      // assigns it to `cell.contentConfiguration` directly; passing it
+      // through an intermediate `UIHostingConfiguration<AnyView,
+      // EmptyView>` variable would force an outer `AnyView` wrap on
+      // every cell. Letting the Content generic be inferred to the
+      // concrete `ModifiedContent<...>` type saves that wrap — one
+      // fewer layer for SwiftUI's view-identity walk on each cell.
       let provider = VirtualListRowBoxProvider(coordinator: self, indexPath: indexPath)
-      let hostedContent = decorated.environment(\.virtualListRowBoxProvider, provider)
-      var hostingConfig: UIHostingConfiguration<AnyView, EmptyView>
+      let insets = perRowInsets[indexPath]
       if let fixed = configuration.fixedRowHeight {
-        hostingConfig = UIHostingConfiguration {
-          AnyView(hostedContent.frame(height: fixed))
+        var config = UIHostingConfiguration {
+          decorated.environment(\.virtualListRowBoxProvider, provider).frame(height: fixed)
         }
+        if let insets {
+          config = config.margins(.top, insets.top).margins(.bottom, insets.bottom)
+            .margins(.leading, insets.leading).margins(.trailing, insets.trailing)
+        }
+        cell.contentConfiguration = config
       } else {
-        hostingConfig = UIHostingConfiguration {
-          AnyView(hostedContent)
+        var config = UIHostingConfiguration {
+          decorated.environment(\.virtualListRowBoxProvider, provider)
         }
+        if let insets {
+          config = config.margins(.top, insets.top).margins(.bottom, insets.bottom)
+            .margins(.leading, insets.leading).margins(.trailing, insets.trailing)
+        }
+        cell.contentConfiguration = config
       }
-      if let insets = perRowInsets[indexPath] {
-        hostingConfig = hostingConfig.margins(.top, insets.top)
-        hostingConfig = hostingConfig.margins(.bottom, insets.bottom)
-        hostingConfig = hostingConfig.margins(.leading, insets.leading)
-        hostingConfig = hostingConfig.margins(.trailing, insets.trailing)
-      }
-      cell.contentConfiguration = hostingConfig
 
       // Rebind cached background on reuse — the modifier `.onAppear`
       // may not fire again for a recycled cell. Skip the `= nil` branch

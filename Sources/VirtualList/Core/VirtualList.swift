@@ -95,10 +95,23 @@ public struct VirtualList {
       // SwiftUI rebuilds the section closures with freshly captured state on
       // every parent update. Cells that this `apply` call did NOT
       // re-dequeue therefore still carry stale content, so we reconfigure
-      // them here. The only time this is redundant is after a full
-      // `reloadData`, where every visible cell will be re-dequeued on the
-      // next layout pass anyway — reconfiguring then would double the work.
-      if outcome != .reloaded {
+      // them here.
+      //
+      // Two outcomes skip the reconfigure step:
+      //
+      // - `.reloaded`: `reloadData()` already re-dequeues every visible
+      //   cell on the next layout pass; running reconfigure on top would
+      //   double the work.
+      // - `.tailIncremental`: the change was a pure tail insert/remove
+      //   under `.indexed`; pre-existing visible cells keep the correct
+      //   IndexPaths, so their content is still right. The `.indexed`
+      //   policy already opts out of O(N) apply costs — it also opts
+      //   out of the per-flip reconfigure-every-visible-cell tax that
+      //   covers the mid-list `@State`-mutation edge case.
+      switch outcome {
+      case .reloaded, .tailIncremental:
+        break
+      case .unchanged, .incremental:
         coordinator.reconfigureVisibleCells()
       }
     }

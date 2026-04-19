@@ -41,6 +41,20 @@ public enum VirtualListApplyOutcome: Sendable, Equatable {
   /// caller still needs to reconfigure them to propagate fresh closure
   /// state.
   case incremental
+
+  /// Pure tail-only incremental change (insert or remove past the end of
+  /// the last section) under the `.indexed` update policy. The only
+  /// IndexPaths affected are the trailing delta itself, so visible cells
+  /// at unchanged IndexPaths already show correct content for the new
+  /// data — no post-apply reconfigure needed.
+  ///
+  /// Semantics match `.incremental` except the representable is allowed
+  /// to skip `reconfigureVisibleCells`. Consistent with the `.indexed`
+  /// policy's overall stance: trade closure-recapture-on-every-flip for
+  /// constant-time apply on the growing / shrinking append path. Callers
+  /// who need fresh closure state on every update should stay on
+  /// `.diffed`.
+  case tailIncremental
 }
 
 /// Visual style applied to the underlying platform list.

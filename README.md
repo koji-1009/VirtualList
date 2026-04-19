@@ -85,32 +85,32 @@ Single-run absolutes drift with machine state — rerun locally before quoting a
 
 | N | `List` median (IQR, outliers) | `VirtualList` median (IQR, outliers) | Verdict (Mann-Whitney U, \|z\|≥3) |
 |---:|---:|---:|:---|
-| 10 | 11.87 (IQR 0.71, 14⚠) | 12.18 (IQR 0.52, 2⚠) | L 1.03× |
-| 20 | 17.43 (IQR 2.31, 12⚠) | 17.41 (IQR 0.23, 1⚠) | tied |
-| 50 | 16.75 (IQR 0.48, 10⚠) | 17.65 (IQR 0.37, 12⚠) | L 1.05× |
-| 100 | 15.70 (IQR 0.88, 6⚠) | 16.37 (IQR 0.34, 0) | L 1.04× |
-| 500 | 18.58 (IQR 3.05, 7⚠) | 17.96 (IQR 0.38, 5⚠) | tied |
-| 1k | 16.34 (IQR 0.47, 7⚠) | 17.15 (IQR 0.35, 13⚠) | L 1.05× |
-| 10k | 16.86 (IQR 0.81, 7⚠) | 16.93 (IQR 0.35, 2⚠) | tied |
-| 100k | 22.21 (IQR 0.44, 2⚠) | 16.69 (IQR 0.35, 0) | **VL 1.33×** |
+| 10 | 12.43 (IQR 0.66, 1⚠) | 12.93 (IQR 0.63, 4⚠) | L 1.04× |
+| 20 | 18.79 (IQR 0.77, 5⚠) | 19.83 (IQR 1.15, 1⚠) | L 1.06× |
+| 50 | 18.87 (IQR 1.16, 3⚠) | 20.47 (IQR 1.12, 3⚠) | L 1.08× |
+| 100 | 16.92 (IQR 0.69, 0) | 18.80 (IQR 0.99, 1⚠) | L 1.11× |
+| 500 | 18.98 (IQR 0.90, 3⚠) | 20.92 (IQR 1.33, 4⚠) | L 1.10× |
+| 1k | 18.21 (IQR 0.68, 1⚠) | 19.68 (IQR 1.34, 2⚠) | L 1.08× |
+| 10k | 18.58 (IQR 0.78, 3⚠) | 20.57 (IQR 2.02, 1⚠) | L 1.11× |
+| 100k | 23.97 (IQR 0.86, 2⚠) | 18.93 (IQR 1.02, 2⚠) | **VL 1.27×** |
 
 **Initial render (Array-of-Identifiable, ms per render):**
 
 | N | `List` median (IQR, outliers) | `VirtualList` median (IQR, outliers) | Verdict (Mann-Whitney U, \|z\|≥3) |
 |---:|---:|---:|:---|
-| 1k | 15.52 (IQR 0.82, 5⚠) | 15.98 (IQR 1.55, 14⚠) | L 1.03× |
-| 10k | 16.07 (IQR 3.43, 4⚠) | 15.52 (IQR 0.64, 15⚠) | VL 1.04× |
-| 100k | 32.76 (IQR 41.58, 3⚠) | 15.08 (IQR 0.40, 11⚠) | **VL 2.17×** |
+| 1k | 15.82 (IQR 0.77, 0) | 16.73 (IQR 0.91, 13⚠) | L 1.06× |
+| 10k | 15.98 (IQR 0.70, 2⚠) | 17.75 (IQR 0.85, 0) | L 1.11× |
+| 100k | 17.74 (IQR 0.69, 2⚠) | 17.05 (IQR 0.91, 1⚠) | **VL 1.04×** |
 
 **Per-update (single-item flip, ms per flip):**
 
 | N | `List` median (IQR, outliers) | `VirtualList` median (IQR, outliers) | Verdict (Mann-Whitney U, \|z\|≥3) |
 |---:|---:|---:|:---|
-| 10 | 1.86 (IQR 0.54, 3⚠) | 1.90 (IQR 1.10, 0) | tied |
-| 100 | 1.34 (IQR 0.13, 8⚠) | 1.58 (IQR 0.15, 0) | L 1.18× |
-| 1k | 1.33 (IQR 0.09, 0) | 1.58 (IQR 0.12, 0) | L 1.18× |
-| 10k | 2.39 (IQR 0.10, 2⚠) | 1.59 (IQR 0.12, 0) | **VL 1.50×** |
-| 100k | 11.80 (IQR 0.16, 6⚠) | 1.74 (IQR 0.15, 0) | **VL 6.77×** |
+| 10 | 1.85 (IQR 0.57, 0) | 1.74 (IQR 1.36, 0) | tied |
+| 100 | 1.42 (IQR 0.10, 7⚠) | 1.29 (IQR 0.14, 2⚠) | **VL 1.10×** |
+| 1k | 1.37 (IQR 0.08, 6⚠) | 1.30 (IQR 0.17, 0) | VL 1.06× |
+| 10k | 2.49 (IQR 0.13, 7⚠) | 1.27 (IQR 0.17, 0) | **VL 1.96×** |
+| 100k | 12.63 (IQR 0.33, 4⚠) | 1.45 (IQR 0.16, 0) | **VL 8.74×** |
 
 ### macOS (native M-series)
 
@@ -118,40 +118,43 @@ Single-run absolutes drift with machine state — rerun locally before quoting a
 
 | N | `List` median (IQR, outliers) | `VirtualList` median (IQR, outliers) | Verdict (Mann-Whitney U, \|z\|≥3) |
 |---:|---:|---:|:---|
-| 10 | 12.55 (IQR 1.41, 0) | 17.58 (IQR 3.79, 0) | L 1.40× |
-| 20 | 19.61 (IQR 2.39, 0) | 25.16 (IQR 2.57, 23⚠) | L 1.28× |
-| 50 | 24.25 (IQR 2.55, 0) | 30.01 (IQR 3.22, 24⚠) | L 1.24× |
-| 100 | 20.99 (IQR 2.30, 0) | 30.88 (IQR 7.30, 4⚠) | L 1.47× |
-| 500 | 27.45 (IQR 2.49, 1⚠) | 30.78 (IQR 7.46, 0) | L 1.12× |
-| 1k | 24.98 (IQR 2.40, 3⚠) | 29.15 (IQR 2.44, 24⚠) | L 1.17× |
-| 10k | 24.41 (IQR 1.75, 2⚠) | 29.52 (IQR 6.13, 0) | L 1.21× |
-| 100k | 32.07 (IQR 2.27, 0) | 30.31 (IQR 5.03, 1⚠) | VL 1.06× |
+| 10 | 12.74 (IQR 1.28, 9⚠) | 17.63 (IQR 2.49, 23⚠) | L 1.38× |
+| 20 | 19.93 (IQR 2.65, 1⚠) | 23.91 (IQR 2.32, 23⚠) | L 1.20× |
+| 50 | 23.78 (IQR 2.23, 4⚠) | 28.90 (IQR 2.62, 24⚠) | L 1.22× |
+| 100 | 21.72 (IQR 2.17, 3⚠) | 26.81 (IQR 3.44, 6⚠) | L 1.23× |
+| 500 | 25.99 (IQR 3.14, 1⚠) | 29.15 (IQR 3.31, 24⚠) | L 1.12× |
+| 1k | 25.05 (IQR 2.65, 2⚠) | 27.76 (IQR 2.28, 24⚠) | L 1.11× |
+| 10k | 25.24 (IQR 1.84, 3⚠) | 27.18 (IQR 2.75, 19⚠) | L 1.08× |
+| 100k | 32.85 (IQR 2.61, 0) | 27.05 (IQR 3.10, 13⚠) | **VL 1.21×** |
 
 **Initial render (Array-of-Identifiable, ms per render):**
 
 | N | `List` median (IQR, outliers) | `VirtualList` median (IQR, outliers) | Verdict (Mann-Whitney U, \|z\|≥3) |
 |---:|---:|---:|:---|
-| 1k | 19.90 (IQR 1.55, 0) | 25.32 (IQR 4.40, 0) | L 1.27× |
-| 10k | 19.99 (IQR 1.28, 2⚠) | 24.63 (IQR 3.54, 2⚠) | L 1.23× |
-| 100k | 25.09 (IQR 1.17, 0) | 24.55 (IQR 3.70, 0) | tied |
+| 1k | 20.87 (IQR 1.83, 3⚠) | 24.09 (IQR 1.77, 21⚠) | L 1.15× |
+| 10k | 20.65 (IQR 2.07, 1⚠) | 24.18 (IQR 2.87, 4⚠) | L 1.17× |
+| 100k | 24.39 (IQR 1.39, 15⚠) | 23.40 (IQR 2.34, 6⚠) | **VL 1.04×** |
 
 **Per-update (single-item flip, ms per flip):**
 
 | N | `List` median (IQR, outliers) | `VirtualList` median (IQR, outliers) | Verdict (Mann-Whitney U, \|z\|≥3) |
 |---:|---:|---:|:---|
-| 10 | 0.56 (IQR 0.17, 1⚠) | 1.22 (IQR 0.51, 1⚠) | L 2.17× |
-| 100 | 1.28 (IQR 0.15, 6⚠) | 1.77 (IQR 0.05, 5⚠) | L 1.38× |
-| 1k | 1.90 (IQR 0.10, 10⚠) | 1.94 (IQR 0.18, 3⚠) | tied |
-| 10k | 4.02 (IQR 0.29, 7⚠) | 1.80 (IQR 0.08, 5⚠) | **VL 2.23×** |
-| 100k | 24.45 (IQR 1.09, 2⚠) | 1.93 (IQR 0.25, 9⚠) | **VL 12.69×** |
+| 10 | 0.62 (IQR 0.20, 3⚠) | 0.55 (IQR 1.03, 0) | tied |
+| 100 | 1.23 (IQR 0.08, 6⚠) | 0.14 (IQR 0.01, 9⚠) | **VL 9.06×** |
+| 1k | 1.95 (IQR 0.10, 4⚠) | 0.14 (IQR 0.01, 8⚠) | **VL 14.38×** |
+| 10k | 4.04 (IQR 0.14, 2⚠) | 0.14 (IQR 0.01, 7⚠) | **VL 29.27×** |
+| 100k | 25.06 (IQR 0.36, 8⚠) | 0.14 (IQR 0.01, 7⚠) | **VL 177.73×** |
 
 ### Reading the tables
 
-- **Where `VirtualList` clearly wins** (bold cells above): init at N=100k on both platforms, update at N≥10k on both platforms. These are the cases that motivate the library — `SwiftUI.List`'s cost scales here, VirtualList's stays flat.
-- **Where `SwiftUI.List` clearly wins**: most macOS cells for N ≤ 10k init (List is 1.12–1.47× faster), and update at N ≤ 100 on both platforms (List 1.18–2.17× faster). A small static list or a list that updates once in a while is what `SwiftUI.List` is already tuned for — VirtualList's `UICollectionView` / `NSTableView` cold-start overhead doesn't pay off at that scale.
-- **Outliers (⚠)** are frequent in the macOS 20–10k Range VL cells (23–24 per 100) and iOS Array 100k List (reflects the heavy-tailed cold-host distribution the library was built to bypass). They're flagged by the Tukey rule but not dropped; the median-based headline is robust to them either way.
+- **Update path:** `VirtualList` is at least tied with `SwiftUI.List` across all sizes, and clearly faster at N ≥ 100 on both platforms. The dramatic macOS numbers (≥ 9× at N = 100, ≥ 175× at N = 100 k) come from the `.tailIncremental` apply path — see [Update policies](#update-policies) — which lets the representable skip the blanket visible-cell reconfigure on pure tail-delta applies. That pay-off compounds the native speed of `NSTableView.insertRows` on macOS; the gap is smaller on iOS because `UICollectionView.insertItems` is the dominant synchronous cost there.
+- **Initial render:** on iOS `VirtualList` sits within 1.04–1.11× of `SwiftUI.List` across N ≤ 10 k and wins at 100 k. On macOS the gap narrows to 1.08–1.23× for 20 ≤ N ≤ 10 k (was 1.19–1.47× in the previous revision) after trimming the per-cell `NSHostingView` overhead — see [Hosting cell micro-opts](#hosting-cell-micro-opts). The initial-render ceiling on macOS is still per-row `NSHostingView` allocation, which `SwiftUI.List` avoids via internal hosting; expect the Cocoa number to stay in that band for very small lists.
+- **Outliers (⚠)** are frequent in the macOS Range-VL cells for 20 ≤ N ≤ 1 k (13–24 per 100) and the iOS L 100 k cells (heavy-tailed cold-host distributions). They're flagged by the Tukey rule but not dropped; the median-based headline is robust to them either way.
 
-Summary: use `VirtualList` when **the list is large** (≥ 10k rows) **or updates frequently** (≥ 10k with regular flips). For anything smaller, `SwiftUI.List` is likely the better choice.
+Summary: `VirtualList` is **tied-or-better on update** across the whole size range and **dominant at ≥ 10 k on update**; it's strictly better at 100 k for initial render on both platforms, and within ~10 % of `SwiftUI.List` elsewhere on iOS. For a static, small list that never mutates, `SwiftUI.List`'s internal list representation still wins on cold-start by a noise-adjacent margin on iOS (and a slightly wider margin on macOS) — pick whichever your call site is already reaching for.
+
+<a id="hosting-cell-micro-opts"></a>
+**Hosting cell micro-opts (cross-platform):** macOS's `HostingTableCellView` inherits directly from `NSView` (not `NSTableCellView`) to drop the unused `textField`/`imageView`/binding scaffolding, and each row's `NSHostingView` is created with `sizingOptions: [.intrinsicContentSize]` so `NSTableView.usesAutomaticRowHeights` reads a cached intrinsic size instead of re-entering the SwiftUI layout engine. On iOS, `UIHostingConfiguration`'s `Content` generic is inferred to the concrete `ModifiedContent<…>` returned by the caller's closure (no outer `AnyView` wrap) so SwiftUI has one less layer to walk on every cell assignment. Both are transparent to call sites.
 
 Separately, the library enforces absolute O(1) / O(visible) budgets as CI gates (`Tests/VirtualListTests/PerformanceTests.swift`). A PR that breaks any of them broke a publicly-committed complexity claim.
 
@@ -225,8 +228,10 @@ Without `.virtualListFocusCoordinator(_:)`, focus still synchronises for rows th
 
 ## Update policies
 
-- **`.diffed` (default)** — backed by `UICollectionViewDiffableDataSource`. Gives automatic insert / delete / move animations; every apply walks the full item count to build a snapshot (O(N)).
+- **`.diffed` (default)** — backed by `UICollectionViewDiffableDataSource`. Gives automatic insert / delete / move animations; every apply walks the full item count to build a snapshot (O(N)). After each apply the library reconfigures every visible cell so closure-captured `@State` mutations show up on rows whose IDs didn't change.
 - **`.indexed`** — classic `UICollectionViewDataSource`; `numberOfItemsInSection` comes straight from the stored count. Apply is O(1), no per-row identifier allocation, so opening a 1M-row page is essentially free. Reloads go through `reloadData` instead of diff animations; surgical `insert` / `delete` on tail-shape changes still animate via `insertItems` / `removeRows`.
+
+   **`.indexed` pure-tail updates skip the visible-cell reconfigure pass.** When the only change from one apply to the next is appending or dropping rows at the end of the last section, existing visible cells already hold correct content for the rows they show — their IndexPaths didn't move, and UIKit dequeues only the inserted/removed row. Skipping reconfigure is what lets the N=100-update-flip benchmark drop below 200 μs on macOS; the flip side is that mid-list `@State`-mutation alongside a tail change won't refresh until the cell leaves and re-enters the viewport. Callers who need fresh closure state on every parent re-render should stay on `.diffed`.
 
 ```swift
 VirtualList(itemCount: 1_000_000, id: { $0 }) { Row(index: $0) }

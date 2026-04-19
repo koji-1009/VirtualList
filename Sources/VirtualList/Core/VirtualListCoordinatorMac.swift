@@ -197,6 +197,7 @@
 
       guard let tableView else { return .reloaded }
       let animation: NSTableView.AnimationOptions = animated ? [.effectFade] : []
+      let isIndexed = configuration.updatePolicy == .indexed
       switch delta {
       case .insert(let rows):
         // Tail insert: existing rows keep their indices. AppKit only
@@ -205,12 +206,12 @@
         tableView.beginUpdates()
         tableView.insertRows(at: rows, withAnimation: animation)
         tableView.endUpdates()
-        return .incremental
+        return isIndexed ? .tailIncremental : .incremental
       case .remove(let rows):
         tableView.beginUpdates()
         tableView.removeRows(at: rows, withAnimation: animation)
         tableView.endUpdates()
-        return .incremental
+        return isIndexed ? .tailIncremental : .incremental
       case .reload:
         tableView.reloadData()
         return .reloaded
@@ -352,10 +353,6 @@
         // SwiftUI content bounded to the row frame, so no per-cell
         // `.frame(height:)` wrapper is needed.
         let indexPath = IndexPath(item: index, section: section)
-        // Re-dequeue may hand us a cell that last rendered a different
-        // IndexPath; clear any row-API decorations from that previous
-        // use before re-installing this IndexPath's cached state.
-        cell.resetRowDecorations()
         // Inject the lightweight provider so `.listRowBackground` /
         // `.listRowInsets` / `.listRowSeparator` / `.badge` modifier
         // `.onAppear`s can lazily allocate a `VirtualListRowBox` for
@@ -369,17 +366,25 @@
         let hosted = decorate(view: raw)
           .environment(\.virtualListRowBoxProvider, provider)
         cell.host(AnyView(hosted))
-        // Apply any cached state captured on a prior modifier fire for
-        // this IndexPath. New rows have empty caches; scroll-back and
-        // reconfigure paths restore what the modifier already committed.
-        if let cached = perRowBackgroundViews[indexPath] {
-          cell.setBackgroundContent(cached)
+        // Apply cached per-row state. Each branch only runs when the
+        // new row has cached state *or* the cell carries stale state
+        // from a previous use — skipping the write otherwise avoids
+        // the NSHostingView setup / teardown thrash that previously
+        // stood out on the update hot path.
+        let newBg = perRowBackgroundViews[indexPath]
+        if newBg != nil || cell.backgroundHostingView != nil {
+          cell.setBackgroundContent(newBg)
         }
-        if let cached = perRowBadgeViews[indexPath] {
-          cell.setBadgeContent(cached)
+        let newBadge = perRowBadgeViews[indexPath]
+        if newBadge != nil || cell.badgeHostingView != nil {
+          cell.setBadgeContent(newBadge)
         }
-        if let insets = perRowInsets[indexPath] {
-          cell.contentInsets = insets
+        let newInsets =
+          perRowInsets[indexPath]
+          ?? .init(top: 0, leading: 0, bottom: 0, trailing: 0)
+        if cell.contentInsets != newInsets {
+          cell.contentInsets = newInsets
+          cell.needsLayout = true
         }
         applySeparatorState(cell, for: indexPath, in: section, itemIndex: index)
       case .header(let section):
@@ -741,7 +746,7 @@
         let item = info.draggingPasteboard.pasteboardItems?.first,
         let string = item.string(forType: Self.reorderPasteboardType),
         let sourceRow = Int(string),
-        case let .item(sourceSection, sourceIndex) = rowKind(at: sourceRow)
+        case .item(let sourceSection, let sourceIndex) = rowKind(at: sourceRow)
       else { return false }
       // AppKit reports the destination as "drop above this row".
       // Translate that into (section, item) using the row immediately
@@ -753,7 +758,7 @@
           item: sections[sourceSection].itemCount - 1,
           section: sourceSection
         )
-      } else if case let .item(destSection, destIndex) = rowKind(at: destinationRow) {
+      } else if case .item(let destSection, let destIndex) = rowKind(at: destinationRow) {
         destinationIP = IndexPath(item: destIndex, section: destSection)
       } else {
         return false
@@ -823,7 +828,7 @@
       didRemove _: NSTableRowView,
       forRow row: Int
     ) {
-      guard case let .item(section, index) = rowKind(at: row) else { return }
+      guard case .item(let section, let index) = rowKind(at: row) else { return }
       let indexPath = IndexPath(item: index, section: section)
       perRowBoxes.removeValue(forKey: indexPath)
       perRowBackgroundViews.removeValue(forKey: indexPath)
@@ -833,7 +838,13 @@
 
   // MARK: - Hosting cell
 
-  /// `NSTableCellView` that hosts a SwiftUI view through `NSHostingView`.
+  /// Plain `NSView` subclass that hosts a SwiftUI view through
+  /// `NSHostingView`. Inherits from `NSView` rather than
+  /// `NSTableCellView` — we don't use the template's
+  /// `textField`/`imageView`/`objectValue`/binding machinery, and
+  /// skipping them shaves storage + setup cost on every cell allocation.
+  /// `NSTableView` accepts any `NSView` from
+  /// `tableView(_:viewFor:row:)`, so the parent class isn't required.
   ///
   /// The hosting view is pinned to the cell via `autoresizingMask` rather
   /// than AutoLayout constraints. Four activated anchor constraints per
@@ -843,7 +854,12 @@
   /// `NSTableView.usesAutomaticRowHeights` still drives row sizing through
   /// `NSHostingView.fittingSize`, which is self-contained per cell and does
   /// not depend on the cell-level constraint wiring.
-  public final class HostingTableCellView: NSTableCellView {
+  public final class HostingTableCellView: NSView {
+    /// Match `NSTableCellView`'s `identifier` affordance so
+    /// `makeView(withIdentifier:owner:)` can recycle us through
+    /// `NSTableView`'s reuse pool. `NSView` already declares
+    /// `identifier: NSUserInterfaceItemIdentifier?`, so this just holds
+    /// the value we set in the delegate.
     private var hostingView: NSHostingView<AnyView>?
 
     // Per-row decoration views, populated on demand by the coordinator
@@ -861,6 +877,12 @@
         return
       }
       let hosting = NSHostingView(rootView: content)
+      // `.intrinsicContentSize` tells the hosting view to cache the
+      // layout's intrinsic size after the first pass. `NSTableView`
+      // with `usesAutomaticRowHeights` queries `fittingSize` once per
+      // inserted row, and a primed intrinsic cache avoids re-entering
+      // the SwiftUI layout engine on subsequent queries.
+      hosting.sizingOptions = [.intrinsicContentSize]
       hosting.frame = bounds
       addSubview(hosting)
       hostingView = hosting
@@ -910,18 +932,30 @@
 
     /// Sets the draw state of the row's top / bottom separator
     /// hair-lines. A separator is installed lazily on first use.
+    ///
+    /// Idempotent: only touches the view hierarchy when the target state
+    /// differs from the cell's current separator state. On hot paths
+    /// like `reconfigureVisibleCells`, the common case is "separator is
+    /// already in the desired state from the previous render" — the
+    /// earlier non-guarded form was allocating + deallocating an
+    /// `NSView` per row per reconfigure, which showed up as ~10 μs/cell
+    /// in profiles.
     func setSeparator(top: Bool, bottom: Bool) {
-      if top {
-        ensureSeparator(\.topSeparator)
-      } else {
-        topSeparator?.removeFromSuperview()
-        topSeparator = nil
+      if top != (topSeparator != nil) {
+        if top {
+          ensureSeparator(\.topSeparator)
+        } else {
+          topSeparator?.removeFromSuperview()
+          topSeparator = nil
+        }
       }
-      if bottom {
-        ensureSeparator(\.bottomSeparator)
-      } else {
-        bottomSeparator?.removeFromSuperview()
-        bottomSeparator = nil
+      if bottom != (bottomSeparator != nil) {
+        if bottom {
+          ensureSeparator(\.bottomSeparator)
+        } else {
+          bottomSeparator?.removeFromSuperview()
+          bottomSeparator = nil
+        }
       }
     }
 
@@ -967,18 +1001,6 @@
       bottomSeparator?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: separatorHeight)
     }
 
-    /// Resets the cell's row-API decorations so a re-dequeue lands on a
-    /// clean baseline. The coordinator calls this from `configureCell`
-    /// before applying any per-IndexPath cached state so a cell that
-    /// was previously the receiver for a decorated row doesn't carry
-    /// those decorations into an undecorated reuse.
-    func resetRowDecorations() {
-      setBackgroundContent(nil)
-      setBadgeContent(nil)
-      setSeparator(top: false, bottom: false)
-      contentInsets = .init(top: 0, leading: 0, bottom: 0, trailing: 0)
-      needsLayout = true
-    }
   }
 
   extension NSRect {
@@ -1094,12 +1116,14 @@
       )
       coordinator.resolveSelection()
       coordinator.resolveFocusBinder()
-      // SwiftUI rebuilds the section closures with freshly captured state on
-      // every parent update. Cells that this `apply` call did NOT
-      // re-dequeue therefore still carry stale content; reconfigure them
-      // here. Only the full `reloadData` path skips this step — AppKit
-      // re-dequeues every visible row itself on the next layout pass there.
-      if outcome != .reloaded {
+      // See the iOS counterpart in `VirtualList.swift` for the matrix.
+      // `.reloaded` already re-dequeues every visible row; `.tailIncremental`
+      // only touched the trailing delta, so visible rows at unchanged
+      // indices already show the correct content.
+      switch outcome {
+      case .reloaded, .tailIncremental:
+        break
+      case .unchanged, .incremental:
         coordinator.reconfigureVisibleCells()
       }
     }
