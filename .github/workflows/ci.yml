@@ -55,8 +55,14 @@ jobs:
           # drop simulator runtimes older than the latest three, so this is
           # effectively the widest supported version gap available on CI in
           # 2026 without manually installing older runtimes.
+          #
+          # Note: GitHub's macos-15 image preprovisions the mainline
+          # iPhone 17 / 17 Pro variants only — the "17e" variant the
+          # README uses for the head-to-head benchmark isn't in the
+          # preinstalled set. CI runs functional + gate tests, which are
+          # device-neutral, so the mainline device is fine here.
           - xcode: latest-stable
-            simulator: "iPhone 17e"
+            simulator: "iPhone 17"
             ios_label: "26"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -96,6 +102,11 @@ jobs:
       - name: Extract gate measurements
         if: always()
         id: gates
+        # Hard ceiling so a hung `swift` script-mode compile (we've seen
+        # `xcodebuild` thrash on "Resolve Package Graph" after a test
+        # failure and tie up the runner) doesn't eat the whole 40-minute
+        # job slot.
+        timeout-minutes: 5
         run: |
           # Pull each performance-gate test case's wall-clock time out of the
           # xcresult bundle. We surface them both as a step summary (shown on
