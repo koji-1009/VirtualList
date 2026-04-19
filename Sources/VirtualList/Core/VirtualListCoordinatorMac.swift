@@ -60,19 +60,12 @@
 
     private var lastAppliedFingerprint: [SectionFingerprint] = []
 
-    /// Per-IndexPath state shared by all row-level modifiers
-    /// (`.listRowBackground`, `.listRowInsets`, `.listRowSeparator`,
-    /// `.badge`). Populated lazily — only rows whose modifiers
-    /// actually fire get an entry, so the no-modifier case stays
-    /// allocation-free. Keyed by `IndexPath(item: index, section:
-    /// section)` so it matches the UIKit coordinator's dict keys and
-    /// the `VirtualListRowBoxProvider` contract.
+    /// Per-IndexPath row-modifier state, populated lazily when the
+    /// owning modifier's `.onAppear` fires and cleared on structural
+    /// apply. The cached views/insets/visibility are re-applied on
+    /// cell re-configuration so a row scrolled back into view doesn't
+    /// flicker through the default.
     private var perRowBoxes: [IndexPath: VirtualListRowBox] = [:]
-
-    /// Cached row-level state fired by modifier callbacks. Read on
-    /// cell re-configuration so a cell scrolled back into view or
-    /// rebuilt after a non-structural update doesn't flicker through
-    /// an undecorated default.
     private var perRowBackgroundViews: [IndexPath: AnyView] = [:]
     private var perRowInsets: [IndexPath: EdgeInsets] = [:]
     private var perRowBadgeViews: [IndexPath: AnyView] = [:]
@@ -97,6 +90,11 @@
       self.tableView = tableView
       tableView.delegate = self
       tableView.dataSource = self
+      // Register the internal pasteboard type so `.virtualListReorder`
+      // can pick up drag sources originating in this table. Drops are
+      // rejected unless the source is this same table, so the type's
+      // presence doesn't affect outside drag-and-drop.
+      tableView.registerForDraggedTypes([Self.reorderPasteboardType])
       tableView.headerView = nil
       tableView.rowSizeStyle = .custom
       tableView.intercellSpacing = NSSize(width: 0, height: 0)
@@ -198,7 +196,7 @@
       guard let tableView else { return .reloaded }
       let animation: NSTableView.AnimationOptions = animated ? [.effectFade] : []
       switch delta {
-      case let .insert(rows):
+      case .insert(let rows):
         // Tail insert: existing rows keep their indices. AppKit only
         // measures/dequeues the inserted rows, so sequential appends stay
         // O(visible) regardless of total row count.
@@ -206,7 +204,7 @@
         tableView.insertRows(at: rows, withAnimation: animation)
         tableView.endUpdates()
         return .incremental
-      case let .remove(rows):
+      case .remove(let rows):
         tableView.beginUpdates()
         tableView.removeRows(at: rows, withAnimation: animation)
         tableView.endUpdates()
@@ -246,7 +244,8 @@
       // Flat-row offset of the tail section's first item row.
       var baseRow = 0
       for i in 0..<(old.count - 1) {
-        baseRow += (old[i].hasHeader ? 1 : 0)
+        baseRow +=
+          (old[i].hasHeader ? 1 : 0)
           + old[i].itemCount
           + (old[i].hasFooter ? 1 : 0)
       }
@@ -297,10 +296,11 @@
     func itemIndexSetsForDelete(from rows: IndexSet) -> [(section: Int, items: IndexSet)] {
       var bySectionIndex: [Int: IndexSet] = [:]
       for row in rows {
-        guard case let .item(section, index) = rowKind(at: row) else { continue }
+        guard case .item(let section, let index) = rowKind(at: row) else { continue }
         bySectionIndex[section, default: IndexSet()].insert(index)
       }
-      return bySectionIndex
+      return
+        bySectionIndex
         .sorted(by: { $0.key < $1.key })
         .map { (section: $0.key, items: $0.value) }
     }
@@ -718,6 +718,74 @@
     public func numberOfRows(in _: NSTableView) -> Int {
       totalRowCount
     }
+
+    // MARK: Drag-reorder
+
+    /// Dragged-type ingredient: row indices travel through the
+    /// pasteboard as a custom UTI. Using a private type (rather than
+    /// `.string`) keeps the reorder drag from being consumable by
+    /// arbitrary other views in the app.
+    static let reorderPasteboardType = NSPasteboard.PasteboardType(
+      "dev.virtuallist.internal.reorder"
+    )
+
+    public func tableView(
+      _: NSTableView,
+      pasteboardWriterForRow row: Int
+    ) -> (any NSPasteboardWriting)? {
+      guard configuration.onMove != nil,
+        case .item = rowKind(at: row)
+      else { return nil }
+      let item = NSPasteboardItem()
+      item.setString(String(row), forType: Self.reorderPasteboardType)
+      return item
+    }
+
+    public func tableView(
+      _ tableView: NSTableView,
+      validateDrop info: any NSDraggingInfo,
+      proposedRow row: Int,
+      proposedDropOperation op: NSTableView.DropOperation
+    ) -> NSDragOperation {
+      guard configuration.onMove != nil,
+        op == .above,
+        info.draggingSource as? NSTableView === tableView
+      else { return [] }
+      return .move
+    }
+
+    public func tableView(
+      _: NSTableView,
+      acceptDrop info: any NSDraggingInfo,
+      row destinationRow: Int,
+      dropOperation: NSTableView.DropOperation
+    ) -> Bool {
+      guard let onMove = configuration.onMove,
+        let item = info.draggingPasteboard.pasteboardItems?.first,
+        let string = item.string(forType: Self.reorderPasteboardType),
+        let sourceRow = Int(string),
+        case let .item(sourceSection, sourceIndex) = rowKind(at: sourceRow)
+      else { return false }
+      // AppKit reports the destination as "drop above this row".
+      // Translate that into (section, item) using the row immediately
+      // at or above the drop position; if the drop lands past the end
+      // of a section, clamp to the section's trailing slot.
+      let destinationIP: IndexPath
+      if destinationRow >= totalRowCount {
+        destinationIP = IndexPath(
+          item: sections[sourceSection].itemCount - 1,
+          section: sourceSection
+        )
+      } else if case let .item(destSection, destIndex) = rowKind(at: destinationRow) {
+        destinationIP = IndexPath(item: destIndex, section: destSection)
+      } else {
+        return false
+      }
+      let sourceIP = IndexPath(item: sourceIndex, section: sourceSection)
+      guard sourceIP != destinationIP else { return false }
+      onMove(sourceIP, destinationIP)
+      return true
+    }
   }
 
   // MARK: - NSTableViewDelegate
@@ -729,13 +797,16 @@
       row: Int
     ) -> NSView? {
       let identifier = Self.itemIdentifier
-      let view = tableView.makeView(withIdentifier: identifier, owner: nil)
+      let view =
+        tableView.makeView(withIdentifier: identifier, owner: nil)
         as? HostingTableCellView
-      let cell = view ?? {
-        let fresh = HostingTableCellView()
-        fresh.identifier = identifier
-        return fresh
-      }()
+      let cell =
+        view
+        ?? {
+          let fresh = HostingTableCellView()
+          fresh.identifier = identifier
+          return fresh
+        }()
       configureCell(cell, at: row)
       return cell
     }
@@ -856,7 +927,8 @@
       }
     }
 
-    private func ensureSeparator(_ keyPath: ReferenceWritableKeyPath<HostingTableCellView, NSView?>) {
+    private func ensureSeparator(_ keyPath: ReferenceWritableKeyPath<HostingTableCellView, NSView?>)
+    {
       if self[keyPath: keyPath] != nil { return }
       let line = NSView()
       line.wantsLayer = true
@@ -892,7 +964,8 @@
       )
       backgroundHostingView?.frame = bounds
       let separatorHeight: CGFloat = 1.0 / (window?.backingScaleFactor ?? 1)
-      topSeparator?.frame = NSRect(x: 0, y: bounds.maxY - separatorHeight, width: bounds.width, height: separatorHeight)
+      topSeparator?.frame = NSRect(
+        x: 0, y: bounds.maxY - separatorHeight, width: bounds.width, height: separatorHeight)
       bottomSeparator?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: separatorHeight)
     }
 
@@ -910,13 +983,13 @@
     }
   }
 
-  private extension NSRect {
+  extension NSRect {
     /// Inset variant that speaks SwiftUI's `EdgeInsets` (which is
     /// leading/trailing rather than left/right). This is a reading-
     /// order-agnostic inset — the macOS path currently does not honour
     /// RTL layouts here, matching `SwiftUI.List` on macOS which also
     /// draws left-to-right regardless of writing direction.
-    func inset(by insets: EdgeInsets) -> NSRect {
+    fileprivate func inset(by insets: EdgeInsets) -> NSRect {
       NSRect(
         x: origin.x + insets.leading,
         y: origin.y + insets.bottom,

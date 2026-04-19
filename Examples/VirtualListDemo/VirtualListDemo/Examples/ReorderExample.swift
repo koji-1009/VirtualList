@@ -10,7 +10,7 @@ public struct ReorderExample: View {
 
   public var body: some View {
     VirtualList(items, id: \.self) { item in
-      Label(item, systemImage: "line.3.horizontal")
+      Text(item)
     }
     .virtualListReorder { from, to in
       let moved = items.remove(at: from.item)

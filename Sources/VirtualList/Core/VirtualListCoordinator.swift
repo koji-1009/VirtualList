@@ -68,44 +68,14 @@
     /// the policy exists) never pay for the map.
     private var indexedIDMap: [AnyHashable: IndexPath]?
 
-    /// Per-indexPath configuration slot shared by all row-level modifiers
-    /// (`.swipeActions`, `.listRowBackground`, `.listRowInsets`,
-    /// `.listRowSeparator`, `.badge`). Each modifier writes into its own
-    /// field via an injected environment reference; the coordinator reads
-    /// the fields at cell configuration time to apply them to UIKit cell
-    /// state. Invalidated on structural apply so stale IndexPaths don't
-    /// survive reorder/insert.
+    /// All per-IndexPath state for row-level modifiers lives in these
+    /// dicts. Each is populated lazily when the owning modifier's
+    /// `.onAppear` fires, and cleared on structural apply so stale
+    /// IndexPaths do not survive a reorder / insert.
     private var perRowBoxes: [IndexPath: VirtualListRowBox] = [:]
-
-    /// `UIHostingController` instances that back per-row `.listRowBackground`
-    /// views via `UIBackgroundConfiguration.customView`. Keyed by
-    /// IndexPath so a scrolling cell re-uses its host rather than
-    /// allocating a fresh controller per `.onAppear`. Cleared on
-    /// structural apply alongside `perRowBoxes`.
     private var perRowBackgroundHosts: [IndexPath: UIHostingController<AnyView>] = [:]
-
-    /// Cached row insets from the most recent `.listRowInsets(_:)` fire
-    /// per IndexPath. The coordinator reads this on re-configure to
-    /// apply `UIHostingConfiguration.margins` before the modifier has
-    /// a chance to run its `.onAppear` on the fresh view — needed so
-    /// a cell being reconfigured (scroll back into view, or
-    /// data-driven update) keeps its previously-declared insets
-    /// without flickering through the default.
     private var perRowInsets: [IndexPath: EdgeInsets] = [:]
-
-    /// Cached separator-visibility overrides from the most recent
-    /// `.listRowSeparator(_:edges:)` fire per IndexPath. Read by the
-    /// `UICollectionLayoutListConfiguration.itemSeparatorHandler` the
-    /// layout installs at build time — that handler is the only
-    /// supported way to per-row override separator visibility on a
-    /// compositional-layout list. Cleared on structural apply.
     private var perRowSeparatorVisibility: [IndexPath: VirtualListRowSeparatorVisibility] = [:]
-
-    /// `UIHostingController` instances that back per-row `.badge(_:)`
-    /// content via `UICellAccessory.customView`. Keyed by IndexPath
-    /// so a scrolling cell re-uses its host rather than allocating a
-    /// fresh controller per `.onAppear`. Cleared on structural apply
-    /// alongside `perRowBoxes`.
     private var perRowBadgeHosts: [IndexPath: UIHostingController<AnyView>] = [:]
 
     /// Benchmark / test entry-point used via `@testable import` to pick the
@@ -116,22 +86,12 @@
       configuration.updatePolicy = policy
     }
 
-    /// Explicit cleanup invoked by `VirtualList.dismantleUIView`.
-    ///
-    /// We deliberately do NOT touch UIKit state here (no `collectionView.dataSource = nil`,
-    /// no `dataSource.apply(emptySnapshot)`). SwiftUI calls `dismantleUIView`
-    /// while the dismiss transition is still in flight, and poking the diffable
-    /// data source or swapping out the collection view's dataSource mid-animation
-    /// races with UIKit's own teardown and causes EXC_BAD_ACCESS on the back
-    /// swipe in diffable-backed lists.
-    ///
-    /// All we need to do is drop every strong reference we own. ARC then releases
-    /// the diffable data source (which in turn releases its snapshot and the
-    /// collection view), the cell registrations, the hosted SwiftUI views, and
-    /// any environment-override closures that captured user `ObservableObject`s.
+    /// Drop every strong reference the coordinator owns. We deliberately do
+    /// NOT touch the collection view's `dataSource` / diffable state —
+    /// SwiftUI calls `dismantleUIView` mid-dismiss-transition, and mutating
+    /// the data source there races UIKit's own teardown into EXC_BAD_ACCESS
+    /// on back-swipe.
     func tearDown(collectionView _: UICollectionView) {
-      // UIControl.addTarget holds weak references, but removing deterministically
-      // keeps the refresh control's action list clean.
       refreshControl?.removeTarget(self, action: nil, for: .allEvents)
 
       attachedFocusBinder?.detach()
@@ -383,9 +343,9 @@
         collectionView.performBatchUpdates({
           self.sections = newSections
           switch delta {
-          case let .insert(indexPaths):
+          case .insert(let indexPaths):
             collectionView.insertItems(at: indexPaths)
-          case let .remove(indexPaths):
+          case .remove(let indexPaths):
             collectionView.deleteItems(at: indexPaths)
           }
         })
@@ -465,27 +425,11 @@
       let rawView = section.itemView(indexPath.item)
       let decorated = decorate(view: rawView)
 
-      // Inject a lightweight provider (weak coordinator ref + IndexPath)
-      // into the hosted view tree. The actual `VirtualListRowBox` is
-      // allocated on demand — only when a row-level modifier's
-      // `.onAppear` fires and calls `provider.resolveBox()`. Rows with
-      // no row-level modifiers stay zero-cost: no box heap allocation,
-      // no per-modifier callback closures, no `perRowBoxes` dict
-      // entry — just the small struct in the environment chain.
+      // Inject the provider so row modifiers can lazily allocate their
+      // box on the first `.onAppear`. Rows with no modifier keep the
+      // box path dormant.
       let provider = VirtualListRowBoxProvider(coordinator: self, indexPath: indexPath)
       let hostedContent = decorated.environment(\.virtualListRowBoxProvider, provider)
-      // No hosting-configuration `.background(_:)` slot here. Rows that
-      // never declare a `.listRowBackground(_:)` stay on the fast
-      // path: one hosting view for content, nothing else. Backgrounds
-      // arrive asynchronously via the `onBackgroundChanged` callback
-      // and are installed through `UIBackgroundConfiguration.customView`,
-      // which renders edge-to-edge across the full cell width.
-      //
-      // Row insets mirror the same pattern: the coordinator reads
-      // `perRowInsets[indexPath]` for any cached value from a prior
-      // `.listRowInsets(_:)` fire, and the modifier's `.onAppear`
-      // refreshes the cached value via `onInsetsChanged` (which
-      // re-runs this configure, idempotently).
       var hostingConfig: UIHostingConfiguration<AnyView, EmptyView>
       if let fixed = configuration.fixedRowHeight {
         hostingConfig = UIHostingConfiguration {
@@ -504,17 +448,11 @@
       }
       cell.contentConfiguration = hostingConfig
 
-      // Rebind an existing background for this IndexPath if the cell
-      // is being re-configured (rather than freshly dequeued) — the
-      // modifier's `.onAppear` may not fire again on reuse, so picking
-      // up the cached state here covers that path.
-      //
-      // When no row anywhere has declared a background
-      // (`perRowBackgroundHosts` is empty), skip the `= nil`
-      // assignment entirely — UIKit does non-trivial work per set on
-      // `UICollectionViewListCell.backgroundConfiguration`, and reusing
-      // the cell's default background costs less than re-stamping nil
-      // on every reconfigure.
+      // Rebind cached background on reuse — the modifier `.onAppear`
+      // may not fire again for a recycled cell. Skip the `= nil` branch
+      // when no row anywhere has a background, since assigning
+      // `backgroundConfiguration` on every reconfigure triggers
+      // non-trivial UIKit work.
       if let cached = perRowBackgroundHosts[indexPath] {
         applyBackgroundConfiguration(on: cell, using: cached)
       } else if !perRowBackgroundHosts.isEmpty {
@@ -522,21 +460,41 @@
       }
 
       // Rebind an existing badge for this IndexPath on reconfigure.
-      // Same fast-path guard as backgrounds: if no row anywhere
-      // declares a badge, don't touch `cell.accessories` — an empty
-      // array reassignment triggers UIKit invalidation that adds up
-      // across reconfigures.
+      // Assemble the trailing accessory set — badge for this row (if
+      // any) plus a reorder handle when the list declared an
+      // `.virtualListReorder` handler. Without the handle the user
+      // has no visible drag affordance; the long-press gesture would
+      // still trigger reorder but nothing on screen signals that.
+      // Fast-path stays in place: if no row anywhere declares either
+      // a badge or reorder, skip the `cell.accessories` assignment so
+      // we don't pay UIKit invalidation per reconfigure.
+      applyAccessories(on: cell, at: indexPath)
+    }
+
+    /// Rebuilds the cell's trailing accessory set from current state —
+    /// badge host (if any) + reorder handle (when onMove is set).
+    /// Both `configure(cell:at:)` and `applyRowBadge` route through
+    /// here so `cell.accessories` is never stamped with just one of
+    /// the two, which would wipe out the other.
+    private func applyAccessories(
+      on cell: UICollectionViewListCell,
+      at indexPath: IndexPath
+    ) {
+      let reorderEnabled = configuration.onMove != nil
+      var accessories: [UICellAccessory] = []
       if let cachedBadge = perRowBadgeHosts[indexPath] {
-        cell.accessories = [badgeAccessory(for: cachedBadge)]
-      } else if !perRowBadgeHosts.isEmpty {
-        cell.accessories = []
+        accessories.append(badgeAccessory(for: cachedBadge))
+      }
+      if reorderEnabled {
+        accessories.append(.reorder(displayed: .always))
+      }
+      if !perRowBadgeHosts.isEmpty || reorderEnabled {
+        cell.accessories = accessories
       }
     }
 
-    /// Fires when a `.listRowBackground(_:)` modifier updates the box.
-    /// Allocates or updates the cell's `UIHostingController`-backed
-    /// background and applies it via `UIBackgroundConfiguration.customView`.
-    /// Cells without a declared background never reach this code path.
+    /// Installs / updates the hosting controller that backs the cell's
+    /// background, or tears it down when `view` is nil.
     private func applyRowBackground(_ view: AnyView?, at indexPath: IndexPath) {
       guard let collectionView,
         let cell = collectionView.cellForItem(at: indexPath) as? UICollectionViewListCell
@@ -547,11 +505,10 @@
           existing.rootView = view
           host = existing
         } else {
+          // `sizingOptions` lets the hosting view size itself without a
+          // parent VC — its `view` is used as a `customView`, not
+          // attached as a child.
           let fresh = UIHostingController(rootView: view)
-          // `sizingOptions` lets the hosted view track the configured
-          // frame without an ambient UIViewController parent, which is
-          // what we need here — the controller's `view` is used as
-          // `customView`, not attached as a child VC.
           fresh.sizingOptions = [.preferredContentSize]
           fresh.view.backgroundColor = .clear
           perRowBackgroundHosts[indexPath] = fresh
@@ -573,32 +530,26 @@
       cell.backgroundConfiguration = config
     }
 
-    /// Fires when a `.badge(_:)` modifier updates the box. Allocates
-    /// or updates the cell's `UIHostingController`-backed badge and
-    /// publishes it through `UICellAccessory.customView` at the
-    /// trailing edge. Cells without a declared badge never reach this
-    /// code path.
+    /// Fires on a `.badge(_:)` commit. Updates the per-IndexPath host
+    /// dict and re-composes the full accessory set so a concurrent
+    /// reorder handle survives the rebuild.
     private func applyRowBadge(_ view: AnyView?, at indexPath: IndexPath) {
       guard let collectionView,
         let cell = collectionView.cellForItem(at: indexPath) as? UICollectionViewListCell
       else { return }
       if let view {
-        let host: UIHostingController<AnyView>
         if let existing = perRowBadgeHosts[indexPath] {
           existing.rootView = view
-          host = existing
         } else {
           let fresh = UIHostingController(rootView: view)
           fresh.sizingOptions = [.preferredContentSize]
           fresh.view.backgroundColor = .clear
           perRowBadgeHosts[indexPath] = fresh
-          host = fresh
         }
-        cell.accessories = [badgeAccessory(for: host)]
       } else {
         perRowBadgeHosts.removeValue(forKey: indexPath)
-        cell.accessories = []
       }
+      applyAccessories(on: cell, at: indexPath)
     }
 
     private func badgeAccessory(for host: UIHostingController<AnyView>) -> UICellAccessory {
@@ -609,13 +560,10 @@
       return .customView(configuration: config)
     }
 
-    /// Fires when a `.listRowInsets(_:)` modifier updates the box.
-    /// Caches the new value and re-runs `configure(cell:at:)` so the
-    /// fresh hosting configuration picks up `UIHostingConfiguration
-    /// .margins` matching the caller's insets. Idempotency protects
-    /// against the callback recursion that `configure`'s fresh box
-    /// would otherwise trigger — the modifier on the new content will
-    /// call back with the same value, which this guard short-circuits.
+    /// Caches the new insets and reconfigures the cell. The previous-
+    /// value guard breaks the callback loop: `configure` reinstalls a
+    /// fresh hosted view whose modifier fires `.onAppear` and re-commits
+    /// the same value, which this short-circuits.
     private func applyRowInsets(_ insets: EdgeInsets?, at indexPath: IndexPath) {
       guard let collectionView,
         let cell = collectionView.cellForItem(at: indexPath) as? UICollectionViewListCell
@@ -630,15 +578,9 @@
       configure(cell: cell, at: indexPath)
     }
 
-    /// Fires when a `.listRowSeparator(_:edges:)` modifier updates the
-    /// box. Caches the new visibility and nudges the layout to re-query
-    /// its `itemSeparatorHandler` — a targeted
-    /// `invalidateLayout(with:)` with just this IndexPath avoids the
-    /// full-layout cost of a bare `invalidateLayout()`.
-    ///
-    /// Idempotency guard short-circuits redundant writes (e.g. the
-    /// modifier re-firing on reuse with the same value), preventing
-    /// unnecessary layout invalidations.
+    /// Caches the visibility and invalidates just this item so the
+    /// layout re-queries `itemSeparatorHandler`. The previous-value
+    /// guard avoids layout invalidation on redundant commits.
     private func applyRowSeparatorVisibility(
       _ visibility: VirtualListRowSeparatorVisibility?,
       at indexPath: IndexPath
