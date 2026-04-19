@@ -143,6 +143,19 @@ struct VirtualListRowProtocolTests {
       }
     _ = wrapped
   }
+
+  @Test func contextMenuWithPreviewIsCallableOnRow() {
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .contextMenu(
+        menuItems: {
+          Button("Open") {}
+        },
+        preview: {
+          Text("Preview").padding()
+        }
+      )
+    _ = wrapped
+  }
 }
 
 #if canImport(UIKit)
@@ -547,6 +560,56 @@ struct VirtualListRowProtocolTests {
       #expect(coord.perRowInsets[indexPath] == insets)
       #expect(coord.perRowSeparatorVisibility[indexPath] == separator)
     }
+
+    /// Integration-level contract: UIKit actually fires
+    /// `didEndDisplaying` when rows scroll offscreen during a real
+    /// scroll-offset change, not just when a test calls the delegate
+    /// method directly. Without this test, a regression that fails to
+    /// set `cv.delegate = self` (or installs a different delegate
+    /// that swallows the event) would go undetected by the unit-level
+    /// cleanup tests above.
+    ///
+    /// Requires the collection view to be in a window so UIKit drives
+    /// its real layout / display pipeline. The assertion is a bound,
+    /// not an equality: UIKit may prefetch cells slightly ahead of the
+    /// viewport, so we allow a small margin over the visible count.
+    @Test func realScrollEvictsBoxesForCellsThatLeaveViewport() {
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(width: 320, height: 200)
+
+      // Attach to a window so layout / display drives cell lifecycle.
+      // Without this, `cv.indexPathsForVisibleItems` stays empty on
+      // some iOS versions and `didEndDisplaying` never fires.
+      let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+      let host = UIViewController()
+      window.rootViewController = host
+      host.view.addSubview(cv)
+      cv.frame = host.view.bounds
+      window.isHidden = false
+
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 500)], animated: false)
+      cv.layoutIfNeeded()
+
+      // Allocate boxes for every cell the user touches by scrolling —
+      // simulates the `.onAppear`-driven modifier path without having
+      // to wait for SwiftUI's lifecycle to fire in a test harness.
+      let offsets: [CGFloat] = [0, 400, 800, 1200, 1600, 2000, 2400, 2800]
+      for offset in offsets {
+        cv.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+        cv.layoutIfNeeded()
+        for ip in cv.indexPathsForVisibleItems {
+          _ = coord.ensureRowBox(at: ip)
+        }
+      }
+
+      // A broken `didEndDisplaying` hook would leave one box per
+      // visited IndexPath — tens of entries. A healthy one bounds
+      // the count to roughly the visible cell count at the final
+      // offset.
+      let visibleAtEnd = cv.indexPathsForVisibleItems.count
+      #expect(coord.perRowBoxes.count <= visibleAtEnd + 4)
+    }
   }
 
   /// Reorder surfaces two concerns that this suite locks in:
@@ -642,6 +705,85 @@ struct VirtualListRowProtocolTests {
         return
       }
       #expect(cell.accessories.count == 1)
+    }
+  }
+
+  /// `.listItemTint(_ :Color?)` stores the value in the per-row box
+  /// and the coordinator writes it through to `cell.tintColor`, which
+  /// is the side channel UIKit-drawn chrome (reorder handle, default
+  /// swipe-action icons) reads. Structural apply clears it; nil
+  /// clears the cell's tint.
+  @Suite("listItemTint pipeline (iOS)")
+  @MainActor
+  struct ListItemTintPipelineTests {
+    @Test func commitingTintCachesColorAndSetsCellTintColor() {
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      box.tint.commit(Color.red)
+
+      #expect(coord.perRowTintColors[indexPath] == Color.red)
+      let cell = cv.cellForItem(at: indexPath) as? UICollectionViewListCell
+      #expect(cell?.tintColor == UIColor(Color.red))
+    }
+
+    @Test func commitingNilClearsCacheAndCellTint() {
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      box.tint.commit(Color.red)
+      box.tint.commit(nil)
+
+      #expect(coord.perRowTintColors[indexPath] == nil)
+    }
+
+    @Test func structuralApplyClearsTintCache() {
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      box.tint.commit(Color.red)
+      #expect(coord.perRowTintColors[indexPath] == Color.red)
+
+      coord.apply(sections: [syntheticSection(count: 5)], animated: false)
+      #expect(coord.perRowTintColors[indexPath] == nil)
+    }
+
+    @Test func cellRebindPicksUpCachedTintOnReconfigure() {
+      // `configure(cell:at:)` runs on every reconfigure (e.g. after a
+      // reload). Without the cache-rebind path, a tint committed
+      // before the reconfigure would be dropped from the cell view.
+      let coord = VirtualListPlatformCoordinator()
+      let cv = makePlatformCollectionView(height: 220)
+      coord.install(on: cv)
+      coord.apply(sections: [syntheticSection(count: 3)], animated: false)
+      cv.layoutIfNeeded()
+
+      let indexPath = IndexPath(item: 0, section: 0)
+      let box = coord.ensureRowBox(at: indexPath)
+      box.tint.commit(Color.blue)
+
+      // Force a reconfigure by mutating an unrelated row-level value
+      // on the same cell and re-laying out. The tint should survive.
+      box.insets.commit(EdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2))
+      cv.layoutIfNeeded()
+
+      let cell = cv.cellForItem(at: indexPath) as? UICollectionViewListCell
+      #expect(cell?.tintColor == UIColor(Color.blue))
     }
   }
 #endif

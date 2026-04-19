@@ -79,6 +79,7 @@
     var perRowInsets: [IndexPath: EdgeInsets] = [:]
     var perRowSeparatorVisibility: [IndexPath: VirtualListRowSeparatorVisibility] = [:]
     var perRowBadgeHosts: [IndexPath: UIHostingController<AnyView>] = [:]
+    var perRowTintColors: [IndexPath: Color] = [:]
 
     /// Benchmark / test entry-point used via `@testable import` to pick the
     /// data-source strategy before calling `install(on:)`. Normal callers set
@@ -110,6 +111,7 @@
       perRowInsets.removeAll()
       perRowSeparatorVisibility.removeAll()
       perRowBadgeHosts.removeAll()
+      perRowTintColors.removeAll()
       sections = []
       lastAppliedFingerprint = []
       // Reset configuration so environment-override closures don't outlive
@@ -178,6 +180,9 @@
       }
       fresh.badge.onChange = { [weak self] newBadge in
         self?.applyRowBadge(newBadge, at: indexPath)
+      }
+      fresh.tint.onChange = { [weak self] newTint in
+        self?.applyRowTint(newTint, at: indexPath)
       }
       perRowBoxes[indexPath] = fresh
       return fresh
@@ -456,6 +461,18 @@
       // a badge or reorder, skip the `cell.accessories` assignment so
       // we don't pay UIKit invalidation per reconfigure.
       applyAccessories(on: cell, at: indexPath)
+
+      // Rebind the per-row tint the accessory pass above reads from.
+      // `applyAccessories` intentionally runs first so the tint is
+      // applied after the reorder handle is in place (the handle
+      // picks up `tintColor` at draw time, so ordering only affects
+      // readability). Cache-empty fast path skips the property
+      // assignment entirely for lists with no `.listItemTint` anywhere.
+      if let cached = perRowTintColors[indexPath] {
+        cell.tintColor = UIColor(cached)
+      } else if !perRowTintColors.isEmpty {
+        cell.tintColor = nil
+      }
     }
 
     /// Rebuilds the cell's trailing accessory set from current state —
@@ -545,6 +562,26 @@
         placement: .trailing(displayed: .always)
       )
       return .customView(configuration: config)
+    }
+
+    /// Caches the tint and writes it onto the cell. UIKit's
+    /// `UICellAccessory.reorder` and default swipe-action icons read
+    /// `cell.tintColor`; the SwiftUI content cascade (`.tint(_:)`) is
+    /// applied separately inside the modifier, so this handler only
+    /// needs to touch the UIKit side. The previous-value guard matches
+    /// `applyRowInsets`'s callback-loop break.
+    private func applyRowTint(_ tint: Color?, at indexPath: IndexPath) {
+      let previous = perRowTintColors[indexPath]
+      guard previous != tint else { return }
+      if let tint {
+        perRowTintColors[indexPath] = tint
+      } else {
+        perRowTintColors.removeValue(forKey: indexPath)
+      }
+      guard let collectionView,
+        let cell = collectionView.cellForItem(at: indexPath) as? UICollectionViewListCell
+      else { return }
+      cell.tintColor = tint.map { UIColor($0) }
     }
 
     /// Caches the new insets and reconfigures the cell. The previous-
@@ -718,6 +755,7 @@
       perRowInsets.removeAll(keepingCapacity: true)
       perRowSeparatorVisibility.removeAll(keepingCapacity: true)
       perRowBadgeHosts.removeAll(keepingCapacity: true)
+      perRowTintColors.removeAll(keepingCapacity: true)
 
       switch configuration.updatePolicy {
       case .diffed:

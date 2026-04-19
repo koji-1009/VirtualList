@@ -73,6 +73,14 @@ public final class VirtualListRowBox {
     // is iOS-only.
     var leadingSwipeActions: [VirtualListSwipeAction] = []
     var trailingSwipeActions: [VirtualListSwipeAction] = []
+
+    // Row tint is iOS-only state: the UIKit-drawn chrome
+    // (`UICellAccessory.reorder`, default swipe-action icons) reads
+    // `cell.tintColor` rather than the SwiftUI environment. On macOS
+    // there is no comparable side channel — `.tint(_:)` on the SwiftUI
+    // content cascade covers every piece of chrome we draw, so the
+    // slot is not needed there.
+    var tint = Slot<Color>()
   #endif
 }
 
@@ -231,11 +239,31 @@ extension VirtualListRow {
   /// through `UIHostingConfiguration` / `NSHostingView`, so
   /// `SwiftUI.List`'s private `.listItemTint` environment key doesn't
   /// reach it — calling the `View` version would compile silently and
-  /// do nothing. Forwarding to `.tint(_:)` instead threads the value
-  /// through the SwiftUI content tree so inline symbols, badges, and
-  /// any `.tint`-consuming child pick it up.
+  /// do nothing. We do two things so the tint actually lands:
+  ///  1. Forward the value into `.tint(_:)` on the SwiftUI content tree
+  ///     so inline symbols, the badge, and any `.tint`-consuming child
+  ///     pick it up. This is the only channel macOS has.
+  ///  2. On iOS, also record the value in the row box so the
+  ///     coordinator can set `cell.tintColor`, which is what the
+  ///     UIKit-drawn reorder handle and default swipe-action icons
+  ///     read from.
+  ///
+  /// The `ListItemTint?` overload is deliberately not shadowed — it
+  /// would leak `.monochrome` / `.preferred(Color)` through an opaque
+  /// value we can't unpack. Callers who type `.listItemTint(.red)`
+  /// land on the `Color?` overload via overload resolution;
+  /// `.listItemTint(.monochrome)` falls through to SwiftUI's View
+  /// version, which is a silent no-op inside `VirtualList`. Prefer
+  /// the `Color?` form.
   public func listItemTint(_ tint: Color?) -> some View {
-    _VirtualListRowAsView(row: self).tint(tint)
+    let content = _VirtualListRowAsView(row: self).tint(tint)
+    #if canImport(UIKit)
+      return content.modifier(
+        VirtualListRowSlotModifier(value: tint, slot: \VirtualListRowBox.tint)
+      )
+    #else
+      return content
+    #endif
   }
 
   /// Row-level context menu. Mirrors
@@ -249,6 +277,23 @@ extension VirtualListRow {
   ) -> some View {
     let items = menuItems()
     return _VirtualListRowAsView(row: self).contextMenu { items }
+  }
+
+  /// Preview-carrying overload. Mirrors
+  /// `SwiftUI.View.contextMenu(menuItems:preview:)`. The custom
+  /// preview view replaces the row's own snapshot as the lifted
+  /// chrome while the long-press gesture is active — the SwiftUI
+  /// `.contextMenu` inside `UIHostingConfiguration` / `NSHostingView`
+  /// picks this up natively; we only need to guarantee the forward
+  /// survives the `VirtualListRow` method-lookup path.
+  public func contextMenu<MenuItems: View, Preview: View>(
+    @ViewBuilder menuItems: () -> MenuItems,
+    @ViewBuilder preview: () -> Preview
+  ) -> some View {
+    let items = menuItems()
+    let previewView = preview()
+    return _VirtualListRowAsView(row: self)
+      .contextMenu(menuItems: { items }, preview: { previewView })
   }
 }
 
