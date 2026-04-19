@@ -20,6 +20,7 @@
 		CC00000000000000000000C8 /* SectionedExample.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000B8 /* SectionedExample.swift */; };
 		CC00000000000000000000C9 /* SelectionExample.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000B9 /* SelectionExample.swift */; };
 		CC00000000000000000000CA /* SwipeActionsExample.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000BA /* SwipeActionsExample.swift */; };
+		CC00000000000000000000CD /* MatchedGeometryExample.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00000000000000000000BD /* MatchedGeometryExample.swift */; };
 		EE00000000000000000000A3 /* VirtualList in Frameworks */ = {isa = PBXBuildFile; productRef = EE00000000000000000000A1 /* VirtualList */; };
 /* End PBXBuildFile section */
 
@@ -38,6 +39,7 @@
 		CC00000000000000000000B8 /* SectionedExample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionedExample.swift; sourceTree = "<group>"; };
 		CC00000000000000000000B9 /* SelectionExample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionExample.swift; sourceTree = "<group>"; };
 		CC00000000000000000000BA /* SwipeActionsExample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeActionsExample.swift; sourceTree = "<group>"; };
+		CC00000000000000000000BD /* MatchedGeometryExample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchedGeometryExample.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +93,7 @@
 				CC00000000000000000000B4 /* GridExample.swift */,
 				CC00000000000000000000B3 /* FocusExample.swift */,
 				CC00000000000000000000B1 /* EnvironmentExample.swift */,
+				CC00000000000000000000BD /* MatchedGeometryExample.swift */,
 				CC00000000000000000000BC /* ListComparisonExample.swift */,
 			);
 			path = Examples;
@@ -182,6 +185,7 @@
 				CC00000000000000000000C4 /* GridExample.swift in Sources */,
 				CC00000000000000000000C3 /* FocusExample.swift in Sources */,
 				CC00000000000000000000C1 /* EnvironmentExample.swift in Sources */,
+				CC00000000000000000000CD /* MatchedGeometryExample.swift in Sources */,
 				CC00000000000000000000CC /* ListComparisonExample.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

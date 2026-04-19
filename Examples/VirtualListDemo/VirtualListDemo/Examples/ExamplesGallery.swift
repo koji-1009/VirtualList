@@ -26,6 +26,9 @@ public struct ExamplesGallery: View {
         Section("Advanced") {
           NavigationLink("Focus coordinator") { FocusExample() }
           NavigationLink("Environment forwarding") { EnvironmentExample() }
+          NavigationLink("Matched geometry across cells") {
+            MatchedGeometryExample()
+          }
         }
         Section("Performance") {
           NavigationLink("List vs VirtualList") { ListComparisonExample() }
