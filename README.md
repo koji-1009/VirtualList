@@ -64,15 +64,17 @@ Latest three generations in each family:
 
 30-iter averages vs `SwiftUI.List`, same data, same host, Debug build. iOS numbers from iPhone 17e simulator (iOS 26.3); macOS numbers from a native M-series build. Single-run absolutes drift — the ratios are stable, the ms values are not. Harness at `Tests/VirtualListTests/ListVsVirtualListBenchmarks.swift`.
 
+Cells marked `tied` are within measurement noise: applying a two-sample Welch-style check (`|Δ| / √(SE_L² + SE_VL²)` with SE from the 30-iter SD), the gap does not clear `|t| ≥ 3`. Ratios are only stated where the difference is statistically distinguishable from noise.
+
 **Initial render (Range shape, ms):**
 
 | N      | iOS `List` | iOS `VirtualList` | iOS ratio | macOS `List` | macOS `VirtualList` | macOS ratio |
 |-------:|-----------:|------------------:|:----------|-------------:|--------------------:|:------------|
-|    10  |       10.2 |           **8.8** | VL 1.2×   |         12.0 |                13.0 | L 1.1×      |
-|    20  |       13.4 |          **12.8** | VL 1.05×  |         14.0 |                15.0 | L 1.1×      |
+|    10  |       10.2 |           **8.8** | VL 1.2×   |         12.0 |                13.0 | tied        |
+|    20  |       13.4 |          **12.8** | VL 1.05×  |         14.0 |                15.0 | tied        |
 |    50  |       13.3 |          **12.7** | VL 1.05×  |         19.0 |                20.0 | tied        |
 |   100  |       13.3 |          **12.4** | VL 1.07×  |         19.0 |                19.0 | tied        |
-|   500  |       13.5 |          **12.7** | VL 1.06×  |         21.0 |            **20.0** | VL 1.05×    |
+|   500  |       13.5 |          **12.7** | VL 1.06×  |         21.0 |                20.0 | tied        |
 |    1k  |       17.7 |          **15.2** | VL 1.2×   |         18.7 |                18.6 | tied        |
 |   10k  |       18.2 |          **14.9** | VL 1.2×   |         20.3 |            **18.2** | VL 1.1×     |
 |  100k  |       23.2 |          **18.8** | VL 1.2×   |         27.9 |            **17.8** | VL 1.6×     |
@@ -94,12 +96,11 @@ Latest three generations in each family:
 
 **Reading the tables:**
 
-- **iOS**: `VirtualList` is faster across the board, including at N=10. `SwiftUI.List` on iOS is itself a `UICollectionView` wrapper with diff-machinery overhead that VL's direct path avoids.
-- **macOS**, short lists (N ≤ 50): `SwiftUI.List` is faster or tied. `VirtualList`'s `NSTableView` cold-start costs a few ms that `SwiftUI.List`'s native path avoids. Use `SwiftUI.List` for short static lists on macOS.
-- **macOS**, medium-to-large lists (N ≥ ~500): `VirtualList` pulls ahead on init, and the update path wins decisively from at least N=10k.
+- **iOS** (SD 2–4 %): `VirtualList` wins from N=10 onward. `SwiftUI.List` on iOS is itself a `UICollectionView` wrapper with diff-machinery overhead that VL's direct path avoids — the gap is small in absolute ms but statistically clear.
+- **macOS** init, N ≤ 1k (SD 6–12 %): VL ≈ `SwiftUI.List`. Sub-ms differences that look directional on any single run fail the noise threshold across 30 iterations. Neither engine is the obvious pick on a small static list.
+- **macOS** init, N ≥ 10k: VL pulls ahead as `SwiftUI.List`'s cost scales; VL's stays flat at ~18 ms.
+- **Update path** (SD 1–2 %): VL wins decisively at every measured N, on both platforms.
 - `VirtualList`'s cost stays flat in N (~14 ms iOS, ~18 ms macOS); `SwiftUI.List` scales on the Array-of-Identifiable and update paths.
-
-Closing the macOS short-list gap is future work — the current `NSTableView` backing adds startup overhead that a hand-rolled AppKit backing could avoid. Not yet implemented.
 
 Separately, the library enforces absolute O(1) / O(visible) budgets as CI gates (`Tests/VirtualListTests/PerformanceTests.swift`). A PR that breaks any of them broke a publicly-committed complexity claim.
 
