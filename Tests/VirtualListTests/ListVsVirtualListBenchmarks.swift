@@ -160,16 +160,27 @@ final class ListVsVirtualListBenchmarks: XCTestCase {
 
   // MARK: - Views under test
 
+  // Both sides pin `.plain` so the style-default asymmetry between
+  // engines (SwiftUI.List's default is context-dependent and
+  // resolves via `.automatic`; VirtualList's default is
+  // unconditionally `.plain`) does not silently bias the
+  // measurement. Without these modifiers, the List side may render
+  // `.insetGrouped` chrome in some hosting contexts, which would
+  // load it with section-background drawing costs that the VL side
+  // does not pay.
+
   private func listRangeView(count: Int) -> some View {
     List(0..<count, id: \.self) { index in
       Text("Row \(index)")
     }
+    .listStyle(.plain)
   }
 
   private func virtualListRangeView(count: Int) -> some View {
     VirtualList(itemCount: count, id: { $0 }) { index in
       Text("Row \(index)")
     }
+    .virtualListStyle(.plain)
     .virtualListUpdatePolicy(.indexed)
   }
 
@@ -177,12 +188,14 @@ final class ListVsVirtualListBenchmarks: XCTestCase {
     List(data) { row in
       Text(row.title)
     }
+    .listStyle(.plain)
   }
 
   private func virtualListCollectionView(data: [Row]) -> some View {
     VirtualList(data) { row in
       Text(row.title)
     }
+    .virtualListStyle(.plain)
     .virtualListUpdatePolicy(.indexed)
   }
 
