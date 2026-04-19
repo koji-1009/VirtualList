@@ -142,7 +142,7 @@ Rows that never use a row-level modifier pay nothing — the backing box and its
 
 ### Not supported
 
-- `.listItemTint(ListItemTint?)` — use `.listItemTint(VirtualListItemTint)` with `.fixed(_:)` / `.preferred(_:)` / `.monochrome`. `SwiftUI.ListItemTint` is opaque; passing it to `VirtualList` is a compile error rather than a silent no-op.
+- `.listItemTint(_: Color?)` / `.listItemTint(.monochrome)` / `.listItemTint(.fixed(_:))` / `.listItemTint(.preferred(_:))` — **supported via dot-shorthand**. Swift's protocol-specificity rule resolves the call to our local `VirtualListItemTint` enum (identical cases to `SwiftUI.ListItemTint`), so SwiftUI.List migrations work without edit. The only call that fails is the rare form that spells the type out explicitly, `.listItemTint(ListItemTint.monochrome)` — `SwiftUI.ListItemTint` is opaque (no public accessor for its carried `Color`), so we shadow that overload with `@available(*, unavailable)` and point the error at `VirtualListItemTint` rather than let it silently no-op inside our hosted cells.
 - `.swipeActions` on macOS — AppKit has no swipe gesture; use `.contextMenu` instead. Compile error on macOS rather than silent no-op.
 - `.refreshable` / `.scrollDismissesKeyboard` on macOS — no pull-to-refresh / no soft keyboard. Compile error.
 - Cross-cell `matchedGeometryEffect` — cells live in UIKit/AppKit, outside the SwiftUI transition system. Drive cross-cell animation with an explicit snapshot crossfade on top of the list.

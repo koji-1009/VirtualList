@@ -169,6 +169,35 @@ struct VirtualListRowProtocolTests {
     #expect(VirtualListItemTint.monochrome.resolvedColor == nil)
   }
 
+  // Dispatch-proof for the dot-shorthand call site. `.listItemTint(.monochrome)`
+  // compiling does not by itself prove we dispatched to the
+  // `VirtualListItemTint?` overload — SwiftUI.View's inherited
+  // `listItemTint(_: ListItemTint?)` would also match `.monochrome` and
+  // compile to a silent no-op inside our hosted cells. The test below
+  // inspects the result type: our overload threads content through
+  // `_VirtualListRowAsView`, SwiftUI's does not. Finding that wrapper
+  // name in the type string confirms the `VirtualListRow` protocol
+  // extension won.
+  @Test func dotShorthandListItemTintResolvesToVirtualListItemTintOverload() {
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .listItemTint(.monochrome)
+    let t = String(describing: type(of: wrapped))
+    #expect(
+      t.contains("_VirtualListRowAsView"),
+      "dot-shorthand .listItemTint(.monochrome) should dispatch through VirtualListRow's overload, not SwiftUI.View's. Got type: \(t)"
+    )
+  }
+
+  @Test func dotShorthandListItemTintFixedAlsoResolvesToOurOverload() {
+    let wrapped = VirtualListRowContainer { Text("x") }
+      .listItemTint(.fixed(.red))
+    let t = String(describing: type(of: wrapped))
+    #expect(
+      t.contains("_VirtualListRowAsView"),
+      "Got type: \(t)"
+    )
+  }
+
   @Test func contextMenuExtensionIsCallableOnRow() {
     let wrapped = VirtualListRowContainer { Text("x") }
       .contextMenu {
