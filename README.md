@@ -2,7 +2,11 @@
 
 A high-performance SwiftUI list that scales to millions of rows by wrapping `UICollectionView` + `UICollectionViewDiffableDataSource` behind a SwiftUI-idiomatic API.
 
-At large N, `SwiftUI.List`'s update path scales with the item count — each data change forces an O(N) identity walk before the collection view sees any diff. `VirtualList` exposes an index-based builder modeled after `UICollectionView`, `RecyclerView`, `SliverList`, and `LazyColumn` so both the initial render and subsequent updates stay O(1) / O(visible). The gap is measured rather than asserted — see _Performance_ below.
+`SwiftUI.List` shows a measurable performance gap that widens with N, concentrated on the structural-update path — the Performance numbers below put `VirtualList` roughly 5× faster at 100k-row updates on iOS and around 14× faster at 100k-row updates on macOS, medianed over 30 iterations. Initial-render gaps are smaller and shape-dependent (up to ~4× on iOS Array-of-Identifiable at 100k, closer to 1-1.5× on the Range fast path Apple already optimises).
+
+Individual sample iterations swing much further — `SwiftUI.List`'s cold-start costs have a heavy tail — so any single-run ratio should be read as "this order of magnitude" rather than a fixed number; rerun the harness on your own hardware before committing.
+
+`VirtualList` exposes an index-based builder modeled after `UICollectionView`, `RecyclerView`, `SliverList`, and `LazyColumn` so both the initial render and subsequent updates stay O(1) / O(visible), and an `s/List/VirtualList/g` migration compiles unchanged.
 
 ---
 
@@ -60,8 +64,7 @@ Latest three generations in each family:
 | macCatalyst 17+ | same as iOS | same as iOS |
 | macOS 14+ | macOS 14, 15, 26 | `NSTableView` + custom `HostingTableCellView` (NSHostingView) |
 
-`VirtualList` conforms to `UIViewRepresentable` on iOS/Catalyst and `NSViewRepresentable` on native macOS. The cross-platform parts of the API (`virtualListStyle`, `virtualListUpdatePolicy`, `virtualListSelection`,
-`virtualListReorder`, `virtualListColumns`, `virtualListEnvironment*`, `virtualListFocusCoordinator`) work on both. Two modifiers are UIKit-only and not exposed on macOS:
+`VirtualList` conforms to `UIViewRepresentable` on iOS/Catalyst and `NSViewRepresentable` on native macOS. The cross-platform parts of the API (`virtualListStyle`, `virtualListUpdatePolicy`, `virtualListSelection`, `virtualListReorder`, `virtualListColumns`, `virtualListEnvironment*`, `virtualListFocusCoordinator`) work on both. Two modifiers are UIKit-only and not exposed on macOS:
 
 - `virtualListSwipeActions` (AppKit lists don't have swipe gestures — use a context menu instead)
 - `virtualListRefreshable` (AppKit has no pull-to-refresh)
@@ -95,38 +98,46 @@ Latest three generations in each family:
 | `.virtualListEnvironment(_:_:)` | Forward a custom `EnvironmentKey` into hosted rows. |
 | `.virtualListEnvironmentObject(_:)` | Forward an `ObservableObject` into hosted rows. |
 
-### Drop-in `List` compatibility (iOS)
+### Drop-in `List` compatibility
 
-`VirtualList` also accepts the unprefixed `SwiftUI.List` modifier names, so an
+`VirtualList` accepts the unprefixed `SwiftUI.List` modifier names, so an
 `s/List/VirtualList/g` migration compiles unchanged. Swift's method lookup
 picks the `VirtualList` (or, for per-row modifiers, `VirtualListRow`) version
 over `SwiftUI.View`'s, so the list-aware implementation wins.
 
 List-level aliases:
 
-| Modifier | Forwards to |
-|----------|-------------|
-| `.listStyle(_:)` | `.virtualListStyle(_:)` |
-| `.listRowSeparator(_:edges:)` (list-level) | `.virtualListRowSeparators(_:)` |
-| `.refreshable(action:)` | `.virtualListRefreshable(_:)` |
-| `.onMove(perform:)` | `.virtualListReorder(_:)` |
-| `.onDelete(perform:)` | Default destructive trailing-swipe action (only when no per-row or list-level swipe action is set) |
-| `.scrollContentBackground(_:)` | `collectionView.backgroundColor` — `.visible` paints `.systemBackground`; `.hidden` / `.automatic` keeps it clear |
-| `.scrollDismissesKeyboard(_:)` | `collectionView.keyboardDismissMode` (`.immediately` → `.onDrag`, `.interactively` → `.interactive`, `.never` → `.none`) |
-| `\.editMode` environment | `collectionView.isEditing` (via `.environment(\.editMode, $binding)` or an ancestor `EditButton`) |
+| Modifier | Platform | Behaviour |
+|----------|----------|-----------|
+| `.listStyle(_:)` | iOS + macOS | Forwards to `.virtualListStyle(_:)` |
+| `.listRowSeparator(_:edges:)` (list-level) | iOS + macOS | Forwards to `.virtualListRowSeparators(_:)` |
+| `.onMove(perform:)` | iOS + macOS | Forwards to `.virtualListReorder(_:)` |
+| `.onDelete(perform:)` | iOS + macOS | iOS: default destructive trailing-swipe action. macOS: ⌫ key on the selected row(s). Fires the handler with an `IndexSet` per affected section, matching SwiftUI's `ForEach.onDelete` semantics. Only runs when no per-row or list-level swipe action outranks it. |
+| `.scrollContentBackground(_:)` | iOS + macOS | iOS: `collectionView.backgroundColor`. macOS: `NSScrollView.drawsBackground` + `.windowBackgroundColor`. `.visible` paints the platform background; `.hidden` / `.automatic` keeps it clear. |
+| `.refreshable(action:)` | iOS only | Forwards to `.virtualListRefreshable(_:)`. Calling on macOS is a compile error (AppKit has no pull-to-refresh gesture). |
+| `.scrollDismissesKeyboard(_:)` | iOS only | Maps to `UIScrollView.keyboardDismissMode`. Calling on macOS is a compile error (no on-screen keyboard). |
+| `\.editMode` environment | iOS only | Mirrors into `collectionView.isEditing` via `.environment(\.editMode, $binding)` or an ancestor `EditButton`. |
 
-Per-row modifiers — written on a row that conforms to `VirtualListRow` (the
-inline wrapper is `VirtualListRowContainer`):
+Per-row modifiers (iOS + macOS except where noted):
 
-| Modifier | Behaviour |
-|----------|-----------|
-| `.listRowBackground(_:)` | `UIBackgroundConfiguration.customView`, edge-to-edge across the cell |
-| `.listRowInsets(_:)` | `UIHostingConfiguration.margins` |
-| `.listRowSeparator(_:edges:)` (per-row) | `UICollectionLayoutListConfiguration.itemSeparatorHandler` |
-| `.swipeActions { VirtualListSwipeAction(...) }` | Leading or trailing swipe actions, wins over list-level |
-| `.badge(_:)` | Trailing `UICellAccessory.customView` (all four SwiftUI overloads — `Int`, `Text?`, `LocalizedStringKey?`, `StringProtocol?`) |
+| Modifier | Platform | Behaviour |
+|----------|----------|-----------|
+| `.listRowBackground(_:)` | iOS + macOS | iOS: `UIBackgroundConfiguration.customView`, edge-to-edge. macOS: `NSHostingView` behind the cell's content. |
+| `.listRowInsets(_:)` | iOS + macOS | iOS: `UIHostingConfiguration.margins`. macOS: padding on the hosted view inside the table cell. |
+| `.listRowSeparator(_:edges:)` (per-row) | iOS + macOS | iOS: `UICollectionLayoutListConfiguration.itemSeparatorHandler`. macOS: per-row hair-line subviews (top / bottom) drawn at backing-scale thickness. |
+| `.badge(_:)` | iOS + macOS | iOS: trailing `UICellAccessory.customView`. macOS: trailing `NSHostingView` pinned to the padded content frame. All four SwiftUI overloads — `Int`, `Text?`, `LocalizedStringKey?`, `StringProtocol?` — are supported. |
+| `.swipeActions { VirtualListSwipeAction(...) }` | iOS only | Leading or trailing swipe actions; wins over list-level swipe actions. Calling on macOS is a compile error. |
+
+#### Important: per-row modifiers require a `VirtualListRow` receiver
+
+SwiftUI.List reads modifiers like `.listRowBackground` through **private `PreferenceKey`s** that only framework-internal code can see, so third-party packages cannot observe them on a bare `View`. `VirtualList` works around this with a dispatch trick — a protocol extension on `VirtualListRow` that the Swift compiler picks over `SwiftUI.View`'s version for any receiver whose static type conforms to `VirtualListRow`.
+
+The practical consequence: **the row you apply `.listRowBackground` / `.listRowInsets` / `.listRowSeparator` / `.swipeActions` / `.badge` to must conform to `VirtualListRow`**, otherwise the call falls through to SwiftUI's version, which is a silent no-op inside `VirtualList`.
+
+Two adoption paths:
 
 ```swift
+// (1) inline — wrap the content in VirtualListRowContainer
 VirtualList(items) { item in
   VirtualListRowContainer {
     Label(item.title, systemImage: item.icon)
@@ -135,21 +146,26 @@ VirtualList(items) { item in
   .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
   .listRowSeparator(.hidden)
   .badge(item.unread)
-  .swipeActions {
-    VirtualListSwipeAction(title: "Delete", style: .destructive) { ... }
-  }
+  #if canImport(UIKit)
+    .swipeActions {
+      VirtualListSwipeAction(title: "Delete", style: .destructive) { _ in ... }
+    }
+  #endif
 }
 .onDelete { indexSet in ... }
+
+// (2) bespoke row type — conform it to VirtualListRow directly
+struct InboxRow: VirtualListRow {
+  let message: Message
+  var body: some View {
+    Label(message.subject, systemImage: message.icon)
+  }
+}
+
+VirtualList(messages) { InboxRow(message: $0) }
 ```
 
-Callers who author their own row type conform it directly to `VirtualListRow`
-instead of wrapping in `VirtualListRowContainer`; the modifier set is the
-same.
-
-Rows that never use any per-row modifier pay nothing — the
-`VirtualListRowBoxProvider` injected into the environment is a lightweight
-struct, and the backing box + its callback closures are only allocated the
-first time a row-level modifier's `.onAppear` fires on a given IndexPath.
+Rows that never use any per-row modifier pay nothing — the backing box and its callback closures are only allocated the first time a row-level modifier's `.onAppear` fires on a given IndexPath.
 
 ### Focus
 
@@ -176,44 +192,48 @@ Without `.virtualListFocusCoordinator(_:)`, focus still synchronises for rows th
 
 Measured against `SwiftUI.List`, same data, same host. iOS numbers come from an iPhone 17e simulator (iOS 26.3); macOS numbers from a native M-series build. `VirtualList` is configured with `.virtualListUpdatePolicy(.indexed)`.
 
-**Methodology**: 10 iterations per test, preceded by one warm-up invocation whose result is discarded so SwiftUI's first-invocation cold-path costs (JIT, font-descriptor lookups, internal state init) don't inflate the first measured iteration. `avg` is the arithmetic mean over the ten kept runs; `sd` is relative standard deviation. Debug build unless otherwise noted.
+**Methodology**: 30 iterations per test after a discarded warm-up invocation. `SwiftUI.List`'s cold-host costs have a heavy-tailed distribution (single-iteration measurements span roughly 30 ms to 300+ ms on the same hardware because JIT / font-descriptor / diffable-data-source cold paths land unpredictably), so the arithmetic mean is noticeably skewed by a handful of outliers. The tables below report **median** over the 30 kept samples, which is the robust central-tendency number for this kind of distribution. `sd` is relative standard deviation of the raw sample list, kept in the table to flag how much per-iteration spread sits behind each cell. Debug build unless otherwise noted.
 
-**Initial render** (cold host attached to a real window + body + layout, ms):
+Per-run variance is real — rerun the harness on your own hardware before committing to any specific ratio. The orderings (which engine wins, and by how many ×) are stable across runs; the absolute ms values are not.
 
-| N    | Platform |     `List` |     `VirtualList` | Winner |
-|------|----------|-----------:|------------------:|:------:|
-| 1k range       | iOS   |  27.5 (sd 22%) | **14.2 (sd 3%)** | **VL 1.9×** |
-| 10k range      | iOS   |  28.4 (sd 36%) | **14.1 (sd 3%)** | **VL 2.0×** |
-| 100k range     | iOS   |  26.9 (sd 12%) | **13.5 (sd 1%)** | **VL 2.0×** |
-| 10k collection | iOS   |  67.4 (sd 23%) | **13.5 (sd 3%)** | **VL 5.0×** |
-| 100k collection| iOS   | 197.4 (sd 80%) | **13.9 (sd 4%)** | **VL 14.2×** |
-| 10k range      | macOS |  24.0 (sd 4%)  | **21.7 (sd 14%)** | VL 1.1× |
-| 100k range     | macOS |  38.2 (sd 28%) | **20.1 (sd 21%)** | **VL 1.9×** |
-| 100k collection| macOS |  82.4 (sd 11%) | **18.9 (sd 13%)** | **VL 4.4×** |
+**Initial render** (cold host attached to a real window + body + layout, median ms):
 
-`SwiftUI.List` has a Range fast path (iOS range-initialised at N=100k runs only 27 ms — it skips per-element identity walk) but the Array-of-Identifiable variant (the realistic call site) scales with N into the hundreds of milliseconds. `VirtualList` stays flat at ~14 ms on iOS / ~20 ms on macOS regardless of shape or N.
+| N              | Platform | `List` (sd)     | `VirtualList` (sd)  | Winner          |
+|----------------|----------|----------------:|--------------------:|:----------------|
+| 1k range       | iOS      | 17.7 (sd 5%)    | **15.2 (sd 3%)**    | VL 1.2×         |
+| 10k range      | iOS      | 18.2 (sd 10%)   | **14.9 (sd 2%)**    | VL 1.2×         |
+| 100k range     | iOS      | 23.2 (sd 4%)    | **18.8 (sd 25%)**   | VL 1.2×         |
+| 10k collection | iOS      | 30.9 (sd 54%)   | **14.5 (sd 13%)**   | **VL 2.1×**     |
+| 100k collection| iOS      | 61.3 (sd 119%)  | **14.0 (sd 2%)**    | **VL 4.4×**     |
+| 1k range       | macOS    | 18.7 (sd 9%)    | **18.6 (sd 6%)**    | VL 1.0×         |
+| 10k range      | macOS    | 20.3 (sd 11%)   | **18.2 (sd 8%)**    | VL 1.1×         |
+| 100k range     | macOS    | 27.9 (sd 7%)    | **17.8 (sd 7%)**    | **VL 1.6×**     |
+| 10k collection | macOS    | 17.3 (sd 4%)    | **16.5 (sd 5%)**    | VL 1.0×         |
+| 100k collection| macOS    | 22.5 (sd 6%)    | **16.2 (sd 5%)**    | **VL 1.4×**     |
 
-The `List` SD column is routinely large (22 %-80 %) because SwiftUI decides what to precompute on each cold host differently; a single outlier iteration of 500 ms against nine iterations of 43 ms produces both the high average and the high SD. `VirtualList` is deterministic — SD typically under 5 %.
+`SwiftUI.List` has a Range fast path (iOS range-initialised lists skip per-element identity walk, which keeps the Range rows roughly flat rather than scaling with N), but the Array-of-Identifiable variant (the realistic call site) still scales with N. `VirtualList` stays flat at ~14 ms on iOS / ~17 ms on macOS regardless of shape or N.
 
-**Per-update** (structural change — single item added/removed, ms per flip):
+The iOS `List` collection rows show large SD (54 % at 10k, 119 % at 100k) because the cold-host cost is skewed — a handful of the 30 iterations cost several × the typical one, which is why median and mean diverge on those cells. Median is the robust number; mean is inflated by the tail. `VirtualList` SD stays mostly under ~15 % (one iOS Range cell shows ~40 % on cold-small-N runs); the update-path cells are tight at ~1-10 %.
 
-| N    | Platform |    `List` |    `VirtualList` | Winner |
-|------|----------|----------:|-----------------:|:------:|
-| 10k  | iOS      |  2.81 (sd 9%)  | **2.23 (sd 10%)** | **VL 1.3×** |
-| 10k  | macOS    |  4.53 (sd 27%) | **0.71 (sd 3%)**  | **VL 6.4×** |
-| 100k | iOS      | 13.35 (sd 6%)  | **2.49 (sd 28%)** | **VL 5.4×** |
-| 100k | macOS    | 26.39 (sd 5%)  | **0.77 (sd 8%)**  | **VL 34×**  |
+**Per-update** (structural change — single item added/removed, median ms per flip):
+
+| N    | Platform | `List` (sd)    | `VirtualList` (sd) | Winner           |
+|------|----------|---------------:|-------------------:|:-----------------|
+| 10k  | iOS      | 2.38 (sd 4%)   | **2.14 (sd 6%)**   | VL 1.1×          |
+| 10k  | macOS    | 3.80 (sd 1%)   | **1.71 (sd 1%)**   | **VL 2.2×**      |
+| 100k | iOS      | 12.27 (sd 4%)  | **2.23 (sd 9%)**   | **VL 5.5×**      |
+| 100k | macOS    | 23.53 (sd 1%)  | **1.70 (sd 1%)**   | **VL 13.8×**     |
 
 The pattern:
 
-- **Initial render**: `VirtualList` is flat regardless of N (~14 ms on iOS, ~20 ms on macOS); `SwiftUI.List` scales with N for anything but the Range fast path.
+- **Initial render**: `VirtualList` is flat regardless of N (~14 ms on iOS, ~17 ms on macOS); `SwiftUI.List` scales with N for anything but the Range fast path.
 - **Update**: `VirtualList` routes tail-shape changes through `insertRows`/`removeRows` on macOS and `insertItems`/`deleteItems` on iOS so each apply is O(visible) regardless of N. `SwiftUI.List` walks every row's identity on each update and scales with N.
 - **`.indexed` + `animated: true`** is honoured: surgical inserts and deletes animate; only a full structural change (reorder, section shuffle) falls back to `reloadData`.
 - **`.indexed` lookup** (e.g. binding-driven selection on a 1M-row list) amortises to O(1) via a lazy reverse map: the first lookup after an apply builds the map in O(N); subsequent lookups are constant-time until the next apply.
 
 **Release vs Debug** — the Debug numbers above are not a compilation-mode artefact. Both engines' hot paths live in system frameworks (`UICollectionView`, `UICollectionViewDiffableDataSource`, SwiftUI's hosting machinery) that ship pre-optimised regardless of the user target's configuration. A Release-build iOS measurement produces effectively the same ratios — `VirtualList` itself stays within ±2 % between Debug and Release, so the tables above are a faithful stand-in for production behaviour.
 
-Head-to-head harness at `Tests/VirtualListTests/ListVsVirtualListBenchmarks.swift`; run locally with `swift test --filter ListVsVirtualListBenchmarks` (CI skips it because hosting cost varies with hardware). Parser script at `benchmark/parse_bench.swift` extracts per-test averages (plus min / max / SD) from an `xcodebuild test` or `swift test` log.
+Head-to-head harness at `Tests/VirtualListTests/ListVsVirtualListBenchmarks.swift`; run locally with `swift test --filter ListVsVirtualListBenchmarks` (CI skips it because hosting cost varies with hardware). Parser script at `benchmark/parse_bench.swift` extracts per-test median / average / min / max / SD from an `xcodebuild test` or `swift test` log.
 
 Separate from the comparison, the library asserts its own absolute O(1) budgets as CI gates (see _Test architecture_ below). A PR that breaks any of them broke a publicly-committed complexity claim.
 
@@ -227,8 +247,7 @@ Three layers, separated so CI has a stable signal:
 | Performance gates | `XCTAssertLessThan` + `ContinuousClock` | Guard O(1) / bounded claims with absolute budgets | gating |
 | Trend benchmarks | `XCTestCase.measure` | Observe cost over time | manual |
 
-The gate layer is what catches complexity regressions. The file lives at
-`Tests/VirtualListTests/PerformanceTests.swift` and asserts:
+The gate layer is what catches complexity regressions. The file lives at `Tests/VirtualListTests/PerformanceTests.swift` and asserts:
 
 - `.indexed` apply of 1M rows completes in < 10 ms — any slower means an accidental item-count walk was reintroduced
 - Redundant apply (same `(id, itemCount)` fingerprint) completes in < 1 ms — the snapshot dedup is intact
@@ -262,10 +281,10 @@ The GitHub Actions workflow in `.github/workflows/ci.yml` runs the suite against
 
 ### What isn't automated
 
-**Dynamic Type** is automated — `AccessibilityTests/cellHeightRespondsToDynamicTypeTrait()` asserts that self-sizing cells grow when `preferredContentSizeCategory` is boosted on the hosting window. Two remaining concerns still need a manual pass because their runtime surface depends on services that the simulator under `xcodebuild test` never activates:
+Dynamic Type is covered by `AccessibilityTests/cellHeightRespondsToDynamicTypeTrait()`. Two concerns need a manual pass:
 
-- **VoiceOver**. `UIHostingConfiguration` builds its accessibility element tree lazily — it is only materialised when VoiceOver or Accessibility Inspector is actively walking the hierarchy, so a bare XCTest host never sees populated labels. Verify by running the demo app under Accessibility Inspector / VoiceOver and walking a few rows. `XCUITest` with a VoiceOver-enabled launch environment would automate this, but the project currently ships XCTest only.
-- **iPad hardware-keyboard navigation**. `UIKeyCommand` dispatch is not reachable from `XCTestCase`; confirming arrow-key selection and tab-focus order needs an `XCUIApplication` session that types through `XCUIRemote` / keyboard input. Verify by running the demo on an iPad simulator with a hardware keyboard attached (Connect Hardware Keyboard, Command-K toggles).
+- **VoiceOver** — `UIHostingConfiguration` builds its accessibility tree lazily, only when VoiceOver or Accessibility Inspector is active. Verify by walking a few rows under Accessibility Inspector.
+- **iPad hardware-keyboard navigation** — `UIKeyCommand` is not reachable from `XCTestCase`. Verify on an iPad simulator with Connect Hardware Keyboard enabled (⌘K).
 
 ### Update policies
 
@@ -286,19 +305,15 @@ VirtualList(itemCount: 1_000_000, id: { $0 }) { index in Row(index: index) }
 
 ## Environment forwarding
 
-Trait-backed environment values (`colorScheme`, `layoutDirection`, `dynamicTypeSize`, `displayScale`, …) propagate into cells automatically via
-`UITraitCollection`, so `VirtualList` does **not** re-apply them — doing so would wrap every row in a stack of `AnyView(... .environment(...))` calls on a hot path without buying anything the trait chain doesn't already deliver.
+Trait-backed environment values (`colorScheme`, `layoutDirection`, `dynamicTypeSize`, `displayScale`, …) propagate into cells automatically via `UITraitCollection`, so `VirtualList` does **not** re-apply them — doing so would wrap every row in a stack of `AnyView(... .environment(...))` calls on a hot path without buying anything the trait chain doesn't already deliver.
 
-Values that SwiftUI cannot deliver through traits — parent `.font`, `.disabled`, custom `EnvironmentKey`s, `ObservableObject`s — need an explicit
-forward:
+Values that SwiftUI cannot deliver through traits — parent `.font`, `.disabled`, custom `EnvironmentKey`s, `ObservableObject`s — need an explicit forward:
 
 ```swift
 VirtualList(...)
     .virtualListEnvironment(\.myCustomValue, value)
     .virtualListEnvironmentObject(myStore)
 ```
-
-`SwiftUI.List` re-forwards every environment value regardless of whether the receiving subtree reads it; `VirtualList` asks you to be explicit about values that cross the hosting boundary, and in exchange every cell configuration skips ~10 `AnyView` allocations on the hot path.
 
 ---
 
@@ -312,8 +327,7 @@ VirtualList(...)
 
 ## Examples
 
-A gallery of example screens ships inside the demo app at
-`Examples/VirtualListDemo/VirtualListDemo/Examples/`:
+A gallery of example screens ships inside the demo app at `Examples/VirtualListDemo/VirtualListDemo/Examples/`:
 
 - `HugeListExample` — one million rows
 - `DropInListExample` — `List`-compatible replacement
@@ -327,8 +341,7 @@ A gallery of example screens ships inside the demo app at
 - `EnvironmentExample` — custom environment and environment objects
 - `ExamplesGallery` — the navigation view that ties them all together
 
-Each example is a small SwiftUI `View` next to `VirtualListDemoApp.swift`, so they double as idiomatic usage snippets — read one file to see the full
-integration for a given feature.
+Each example is a small SwiftUI `View` next to `VirtualListDemoApp.swift`, so they double as idiomatic usage snippets — read one file to see the full integration for a given feature.
 
 ### Running the demo app
 
@@ -354,10 +367,7 @@ xcodebuild \
 
 ### Creating your own host app
 
-If you'd rather start a new demo target from scratch, add `VirtualList` as a
-Swift Package dependency of any SwiftUI iOS app and copy any example file from
-`Examples/VirtualListDemo/VirtualListDemo/Examples/` into your own target. A
-three-step walkthrough in Xcode:
+If you'd rather start a new demo target from scratch, add `VirtualList` as a Swift Package dependency of any SwiftUI iOS app and copy any example file from `Examples/VirtualListDemo/VirtualListDemo/Examples/` into your own target. A three-step walkthrough in Xcode:
 
 1. **File › New › Project… › iOS › App** — SwiftUI lifecycle, iOS 16 deployment target.
 2. **File › Add Package Dependencies…** — click _Add Local…_, select this repo's root; tick **VirtualList**.

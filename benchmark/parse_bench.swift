@@ -32,10 +32,24 @@ let metricRegex = try! NSRegularExpression(pattern: metricPattern)
 struct Row {
   let name: String
   let avgMS: Double
+  let medianMS: Double
   let minMS: Double
   let maxMS: Double
   let sd: Double
   let count: Int
+}
+
+/// Classical median — average the two central samples on even counts.
+/// Skewed distributions (SwiftUI.List's cold-host cost has a heavy tail,
+/// so a few iterations measure 10× the typical cost) make the arithmetic
+/// mean unstable even at n=30. The median is the robust number to cite.
+func median(of sorted: [Double]) -> Double {
+  guard !sorted.isEmpty else { return 0 }
+  let mid = sorted.count / 2
+  if sorted.count.isMultiple(of: 2) {
+    return (sorted[mid - 1] + sorted[mid]) / 2
+  }
+  return sorted[mid]
 }
 
 var current: String?
@@ -62,12 +76,15 @@ for line in data.split(whereSeparator: \.isNewline) {
       continue
     }
     let avg = vals.reduce(0, +) / Double(vals.count)
-    let minV = vals.min() ?? 0
-    let maxV = vals.max() ?? 0
+    let sortedVals = vals.sorted()
+    let med = median(of: sortedVals)
+    let minV = sortedVals.first ?? 0
+    let maxV = sortedVals.last ?? 0
     let sd = Double(String(s[sdRange])) ?? 0
     rows.append(Row(
       name: name,
       avgMS: avg * 1000,
+      medianMS: med * 1000,
       minMS: minV * 1000,
       maxMS: maxV * 1000,
       sd: sd,
@@ -81,7 +98,7 @@ let filtered = filter.map { f in rows.filter { $0.name.contains(f) } } ?? rows
 for row in filtered.sorted(by: { $0.name < $1.name }) {
   let namePadded = row.name.padding(toLength: 40, withPad: " ", startingAt: 0)
   print(String(
-    format: "%@ n=%2d avg=%7.2f min=%7.2f max=%7.2f sd=%5.1f%%",
-    namePadded, row.count, row.avgMS, row.minMS, row.maxMS, row.sd
+    format: "%@ n=%2d median=%7.2f avg=%7.2f min=%7.2f max=%7.2f sd=%5.1f%%",
+    namePadded, row.count, row.medianMS, row.avgMS, row.minMS, row.maxMS, row.sd
   ))
 }

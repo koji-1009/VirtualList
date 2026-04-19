@@ -23,13 +23,17 @@ import XCTest
 final class ListVsVirtualListBenchmarks: XCTestCase {
   private let hostSize = CGSize(width: 375, height: 800)
 
-  /// Standard measurement options — 10 iterations so the mean is stable in
-  /// the presence of SwiftUI internal caching / GC jitter. Debug-build
-  /// measurements on a simulator regularly drift 20-40% SD with fewer
-  /// iterations; ten flattens that into a reportable number.
+  /// Standard measurement options — 30 iterations. SwiftUI.List's
+  /// cold-host cost has a heavy tail (single iterations span roughly
+  /// 30 ms to 300 ms on the same hardware because compilation / font-
+  /// descriptor / diffable-data-source cold paths land unpredictably),
+  /// so the sample distribution is skewed rather than normal. Ten
+  /// iterations gives an unreliable mean; thirty tightens both the
+  /// mean and the median into a reportable number and lets the parser
+  /// show a robust central tendency alongside the raw average.
   private func renderMeasureOptions() -> XCTMeasureOptions {
     let opts = XCTMeasureOptions()
-    opts.iterationCount = 10
+    opts.iterationCount = 30
     return opts
   }
 
