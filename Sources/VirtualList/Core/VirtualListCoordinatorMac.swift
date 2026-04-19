@@ -1105,13 +1105,13 @@
     }
 
     /// Maps `.scrollContentBackground(_:)` onto `NSScrollView`'s
-    /// drawing flags. `.hidden` / `.automatic` keep the scroll
-    /// surface transparent so a surrounding SwiftUI `.background(...)`
-    /// shows through (matching `VirtualList`'s historical default);
-    /// `.visible` enables drawing against
-    /// `NSColor.windowBackgroundColor`, the AppKit analogue to iOS's
-    /// `systemBackground`. Idempotency-guarded so `updateNSView`
-    /// doesn't churn property setters on every SwiftUI update.
+    /// drawing flags. Default (unset / `.automatic`) matches
+    /// `SwiftUI.List`'s behaviour: draws against
+    /// `NSColor.windowBackgroundColor` — the AppKit analogue to iOS's
+    /// `systemBackground`. Explicit `.hidden` keeps the scroll surface
+    /// transparent so a surrounding SwiftUI `.background(...)` shows
+    /// through. Idempotency-guarded so `updateNSView` doesn't churn
+    /// property setters on every SwiftUI update.
     private func applyScrollConfiguration(
       to scrollView: NSScrollView,
       from configuration: VirtualListConfiguration
@@ -1119,15 +1119,15 @@
       let targetDraws: Bool
       let targetBackground: NSColor
       switch configuration.scrollContentBackground {
-      case .visible:
+      case .visible, .automatic, nil:
         targetDraws = true
         targetBackground = .windowBackgroundColor
-      case .hidden, .automatic, nil:
+      case .hidden:
         targetDraws = false
         targetBackground = .clear
       @unknown default:
-        targetDraws = false
-        targetBackground = .clear
+        targetDraws = true
+        targetBackground = .windowBackgroundColor
       }
       if scrollView.drawsBackground != targetDraws {
         scrollView.drawsBackground = targetDraws

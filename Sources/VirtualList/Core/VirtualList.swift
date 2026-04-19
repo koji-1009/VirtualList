@@ -116,11 +116,18 @@ public struct VirtualList {
       to collectionView: UICollectionView,
       from configuration: VirtualListConfiguration
     ) {
+      // Default to the system background, matching `SwiftUI.List`. An
+      // earlier revision defaulted to `.clear` which broke the
+      // drop-in claim: `s/List/VirtualList/g` silently changed the
+      // list's background from opaque `systemBackground` to
+      // transparent, showing whatever parent sat behind. Callers who
+      // want the old behaviour pass `.scrollContentBackground(.hidden)`
+      // explicitly, same as they would on `SwiftUI.List`.
       let targetBackground: UIColor
       switch configuration.scrollContentBackground {
-      case .visible: targetBackground = .systemBackground
-      case .hidden, .automatic, nil: targetBackground = .clear
-      @unknown default: targetBackground = .clear
+      case .visible, .automatic, nil: targetBackground = .systemBackground
+      case .hidden: targetBackground = .clear
+      @unknown default: targetBackground = .systemBackground
       }
       // Guarded so `updateUIView` (which runs on every SwiftUI
       // state-change) doesn't churn UIKit property setters when the
