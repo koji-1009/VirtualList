@@ -23,17 +23,24 @@ import XCTest
 final class ListVsVirtualListBenchmarks: XCTestCase {
   private let hostSize = CGSize(width: 375, height: 800)
 
-  /// Standard measurement options — 30 iterations. SwiftUI.List's
-  /// cold-host cost has a heavy tail (single iterations span roughly
-  /// 30 ms to 300 ms on the same hardware because compilation / font-
-  /// descriptor / diffable-data-source cold paths land unpredictably),
-  /// so the sample distribution is skewed rather than normal. Ten
-  /// iterations gives an unreliable mean; thirty tightens both the
-  /// mean and the median into a reportable number and lets the parser
-  /// show a robust central tendency alongside the raw average.
+  /// Standard measurement options — 100 iterations. Benchmark
+  /// distributions here are heavy-tailed (cold-host / GC / scheduler
+  /// effects land on a handful of samples and pull the mean around),
+  /// so n=30 — the classical CLT rule of thumb, which assumes a
+  /// roughly normal distribution — gives only ~30-50 % power to
+  /// distinguish a 5-10 % ratio from noise. n=100 brings that to
+  /// ~80 %+ across the range of ratios this suite reports, and the
+  /// total wall clock stays under a minute on macOS / under two
+  /// minutes on an iPhone simulator because each `measure` block is
+  /// a single render or single flip (ms-scale, not seconds).
+  ///
+  /// `compare_bench.swift` pairs these samples through a Mann-Whitney
+  /// U rank test rather than a Welch t-test, so the distributional
+  /// assumption sits at "samples are exchangeable under the null",
+  /// not "samples are normally distributed".
   private func renderMeasureOptions() -> XCTMeasureOptions {
     let opts = XCTMeasureOptions()
-    opts.iterationCount = 30
+    opts.iterationCount = 100
     return opts
   }
 
@@ -222,26 +229,48 @@ final class ListVsVirtualListBenchmarks: XCTestCase {
   // `UpdateHarnessVirtualListView` types live in `Support/UpdateHarness.swift`
   // so the head-to-head gate in `PerformanceTests.swift` can share them.
 
-  func test_updateList_range_100k() {
-    measureUpdate(count: 100_000, iterations: 20, build: { UpdateHarnessListView(store: $0) })
+  func test_updateList_range_10() {
+    measureUpdate(count: 10, build: { UpdateHarnessListView(store: $0) })
   }
 
-  func test_updateVirtualList_range_100k() {
-    measureUpdate(
-      count: 100_000,
-      iterations: 20,
-      build: { UpdateHarnessVirtualListView(store: $0) }
-    )
+  func test_updateVirtualList_range_10() {
+    measureUpdate(count: 10, build: { UpdateHarnessVirtualListView(store: $0) })
+  }
+
+  func test_updateList_range_100() {
+    measureUpdate(count: 100, build: { UpdateHarnessListView(store: $0) })
+  }
+
+  func test_updateVirtualList_range_100() {
+    measureUpdate(count: 100, build: { UpdateHarnessVirtualListView(store: $0) })
+  }
+
+  func test_updateList_range_1k() {
+    measureUpdate(count: 1_000, build: { UpdateHarnessListView(store: $0) })
+  }
+
+  func test_updateVirtualList_range_1k() {
+    measureUpdate(count: 1_000, build: { UpdateHarnessVirtualListView(store: $0) })
   }
 
   func test_updateList_range_10k() {
-    measureUpdate(count: 10_000, iterations: 50, build: { UpdateHarnessListView(store: $0) })
+    measureUpdate(count: 10_000, build: { UpdateHarnessListView(store: $0) })
   }
 
   func test_updateVirtualList_range_10k() {
     measureUpdate(
       count: 10_000,
-      iterations: 50,
+      build: { UpdateHarnessVirtualListView(store: $0) }
+    )
+  }
+
+  func test_updateList_range_100k() {
+    measureUpdate(count: 100_000, build: { UpdateHarnessListView(store: $0) })
+  }
+
+  func test_updateVirtualList_range_100k() {
+    measureUpdate(
+      count: 100_000,
       build: { UpdateHarnessVirtualListView(store: $0) }
     )
   }
@@ -249,13 +278,19 @@ final class ListVsVirtualListBenchmarks: XCTestCase {
   /// Shared harness for the update benchmarks.
   ///
   /// Builds a hosted list backed by `UpdateHarnessStore` and times
-  /// `iterations` @State flips. Each flip toggles the trailing item
-  /// (`count ↔ count+1`) so the diffable/indexed paths see a real
-  /// structural change without drifting N. The mean per-iteration time is
-  /// what we compare between List and VirtualList.
+  /// **one** @State flip per `measure` block. Each flip toggles the
+  /// trailing item (`count ↔ count+1`) so the diffable/indexed paths
+  /// see a real structural change without drifting N.
+  ///
+  /// Inner iteration count is fixed at 1 so the Clock-Monotonic
+  /// `average` reported by `XCTestCase.measure` is **per flip**
+  /// directly — there is no caller-side divisor to remember. An
+  /// earlier revision accepted an `iterations` parameter and multiplied
+  /// inside the block, which made the raw output 20× or 50× too large
+  /// and left the reader to divide before comparing tests. The bug
+  /// that caused was a script-design bug, not an arithmetic slip.
   private func measureUpdate<Body: View>(
     count: Int,
-    iterations: Int,
     build: (UpdateHarnessStore) -> Body
   ) {
     let store = UpdateHarnessStore(count: count)
@@ -296,18 +331,19 @@ final class ListVsVirtualListBenchmarks: XCTestCase {
       #endif
     }
 
+    // Alternates between `count` and `count+1` across the 30 measured
+    // samples so each `measure` call is a real structural flip, never a
+    // fingerprint no-op. `measure`'s block is invoked once per sample,
+    // and the Clock-Monotonic `average` output is therefore per-flip.
     measure(metrics: [XCTClockMetric()], options: renderMeasureOptions()) {
-      for i in 0..<iterations {
-        // Flip so each tick is a structural change, not a fingerprint no-op.
-        store.count = count + (i % 2)
-        #if canImport(UIKit)
-          host.view.layoutIfNeeded()
-          CATransaction.flush()
-        #elseif canImport(AppKit) && !targetEnvironment(macCatalyst)
-          host.needsLayout = true
-          host.layoutSubtreeIfNeeded()
-        #endif
-      }
+      store.count = (store.count == count) ? count + 1 : count
+      #if canImport(UIKit)
+        host.view.layoutIfNeeded()
+        CATransaction.flush()
+      #elseif canImport(AppKit) && !targetEnvironment(macCatalyst)
+        host.needsLayout = true
+        host.layoutSubtreeIfNeeded()
+      #endif
     }
 
     #if canImport(UIKit)
