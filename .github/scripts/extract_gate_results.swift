@@ -50,20 +50,38 @@ guard FileManager.default.fileExists(atPath: bundlePath) else {
   exit(0)
 }
 
-// Shell out to xcresulttool. Failure is non-fatal — the workflow step
-// that calls us is tagged `if: always()` and must produce a readable
-// summary even when the underlying test job crashed.
+// Shell out to xcresulttool, redirecting stdout/stderr to temp files
+// via `sh -c`. An earlier revision wired `Process.standardOutput` to
+// `Pipe()` and drained it after `waitUntilExit()`; on Xcode 26 with a
+// 123-test bundle that deadlocked (child blocks writing past the
+// 64 KB pipe buffer, parent blocks on `waitUntilExit`). Files have
+// unbounded capacity, so the child drains naturally and we read the
+// result back afterwards.
+//
+// Failure is non-fatal — the workflow step that calls us is tagged
+// `if: always()` and must produce a readable summary even when the
+// underlying test job crashed.
+let tmpDir = FileManager.default.temporaryDirectory
+let stdoutURL = tmpDir.appendingPathComponent("xcresulttool-out-\(UUID().uuidString).json")
+let stderrURL = tmpDir.appendingPathComponent("xcresulttool-err-\(UUID().uuidString).txt")
+defer {
+  try? FileManager.default.removeItem(at: stdoutURL)
+  try? FileManager.default.removeItem(at: stderrURL)
+}
+
+func shellEscape(_ value: String) -> String {
+  "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+let command = """
+  /usr/bin/xcrun xcresulttool get test-results tests \
+  --path \(shellEscape(bundlePath)) --format json \
+  > \(shellEscape(stdoutURL.path)) 2> \(shellEscape(stderrURL.path))
+  """
+
 let proc = Process()
-proc.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-proc.arguments = [
-  "xcresulttool", "get", "test-results", "tests",
-  "--path", bundlePath,
-  "--format", "json",
-]
-let stdout = Pipe()
-let stderr = Pipe()
-proc.standardOutput = stdout
-proc.standardError = stderr
+proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+proc.arguments = ["-c", command]
 do {
   try proc.run()
 } catch {
@@ -71,17 +89,18 @@ do {
   exit(0)
 }
 proc.waitUntilExit()
+
 guard proc.terminationStatus == 0 else {
-  let err = String(
-    data: stderr.fileHandleForReading.readDataToEndOfFile(),
-    encoding: .utf8
-  )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  let err = (try? String(contentsOf: stderrURL, encoding: .utf8))?
+    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
   print("| _xcresulttool failed: \(err)_ | – | – | – |")
   exit(0)
 }
 
-let data = stdout.fileHandleForReading.readDataToEndOfFile()
-guard let root = try? JSONSerialization.jsonObject(with: data) else {
+guard
+  let data = try? Data(contentsOf: stdoutURL),
+  let root = try? JSONSerialization.jsonObject(with: data)
+else {
   print("| _could not parse xcresulttool JSON_ | – | – | – |")
   exit(0)
 }
