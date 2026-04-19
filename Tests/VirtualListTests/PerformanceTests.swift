@@ -121,6 +121,13 @@ final class VirtualListPerformanceGates: XCTestCase {
     coord.install(on: makePlatformCollectionView())
     coord.apply(sections: [syntheticSection(count: 100_000)], animated: false)
 
+    // Warm the diffable data source's internal hash lookups once so the
+    // measured call doesn't absorb first-call lazy init. The gate still
+    // catches the regression it's meant to: a per-call
+    // `dataSource.snapshot()` copy is O(N) on *every* lookup, not a
+    // one-time setup, so warming does not mask it.
+    _ = coord.indexPath(forItemID: AnyHashable(0))
+
     let clock = ContinuousClock()
     let elapsed = clock.measure {
       _ = coord.indexPath(forItemID: AnyHashable(50000))

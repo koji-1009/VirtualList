@@ -262,10 +262,10 @@ The GitHub Actions workflow in `.github/workflows/ci.yml` runs the suite against
 
 ### What isn't automated
 
-Two concerns can't be asserted reliably inside `XCTestCase`, and are verified by hand in the demo app:
+**Dynamic Type** is automated — `AccessibilityTests/cellHeightRespondsToDynamicTypeTrait()` asserts that self-sizing cells grow when `preferredContentSizeCategory` is boosted on the hosting window. Two remaining concerns still need a manual pass because their runtime surface depends on services that the simulator under `xcodebuild test` never activates:
 
-- **VoiceOver**. `UIHostingConfiguration` exposes the hosted SwiftUI view's accessibility tree to UIKit. Pulling that tree out of a detached cell inside a unit test is flaky — the runtime builds the tree only after a real attach to `UIWindow` plus VoiceOver activation. Verify by running the demo app under Accessibility Inspector / VoiceOver and walking a few rows.
-- **Dynamic Type**. `UIHostingConfiguration` self-sizes against the cell's `UITraitCollection.preferredContentSizeCategory`; that propagates through `UIWindow.traitCollection` on real devices/simulators. Verify by toggling the text-size slider in the demo app's Settings shortcut.
+- **VoiceOver**. `UIHostingConfiguration` builds its accessibility element tree lazily — it is only materialised when VoiceOver or Accessibility Inspector is actively walking the hierarchy, so a bare XCTest host never sees populated labels. Verify by running the demo app under Accessibility Inspector / VoiceOver and walking a few rows. `XCUITest` with a VoiceOver-enabled launch environment would automate this, but the project currently ships XCTest only.
+- **iPad hardware-keyboard navigation**. `UIKeyCommand` dispatch is not reachable from `XCTestCase`; confirming arrow-key selection and tab-focus order needs an `XCUIApplication` session that types through `XCUIRemote` / keyboard input. Verify by running the demo on an iPad simulator with a hardware keyboard attached (Connect Hardware Keyboard, Command-K toggles).
 
 ### Update policies
 
