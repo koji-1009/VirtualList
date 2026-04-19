@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  macos:
+    name: Swift tests (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+      - run: swift build
+      - run: swift test
+
+  ios:
+    name: iOS ${{ matrix.ios_label }} (Xcode ${{ matrix.xcode }})
+    runs-on: macos-15
+    strategy:
+      # Keep both jobs going so a regression on one iOS surface doesn't mask
+      # another.
+      fail-fast: false
+      matrix:
+        include:
+          # Default Xcode on macos-15 (16.4 as of Aug 2025) → iOS 18 SDK.
+          - xcode: "16.4"
+            simulator: "iPhone 16"
+            ios_label: "18"
+          # Latest-stable (Xcode 26.x) → iOS 26 SDK. GitHub runner images
+          # drop simulator runtimes older than the latest three, so this is
+          # effectively the widest supported version gap available on CI in
+          # 2026 without manually installing older runtimes.
+          - xcode: latest-stable
+            simulator: "iPhone 17e"
+            ios_label: "26"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: ${{ matrix.xcode }}
+
+      - name: Available simulators
+        run: xcrun simctl list devices available
+
+      # Functional + performance gates. Skip trend-only benchmarks (their
+      # relative-SD is too high for a stable gate).
+      - name: Run tests
+        id: tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme VirtualList \
+            -destination 'platform=iOS Simulator,name=${{ matrix.simulator }}' \
+            -skip-testing:VirtualListTests/VirtualListBenchmarks \
+            -skip-testing:VirtualListTests/ListVsVirtualListBenchmarks \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Extract gate measurements
+        if: always()
+        id: gates
+        run: |
+          # Pull each performance-gate test case's wall-clock time out of the
+          # xcresult bundle. We surface them both as a step summary (shown on
+          # the PR's Checks page) and as a compact JSON for the sticky-comment
+          # step below.
+          swift .github/scripts/extract_gate_results.swift \
+            TestResults.xcresult \
+            > gates.md 2> gates.json || true
+          {
+            echo "### Performance gates · iOS ${{ matrix.ios_label }}"
+            cat gates.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload xcresult
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TestResults-${{ matrix.ios_label }}
+          path: TestResults.xcresult
+          retention-days: 7
+
+      - name: Post sticky PR comment
+        if: github.event_name == 'pull_request' && always()
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          header: perf-gate-ios-${{ matrix.ios_label }}
+          path: gates.md
+
+  demo:
+    name: Demo app (${{ matrix.platform_label }})
+    runs-on: macos-15
+    strategy:
+      # Demo is a single source tree that must compile for both iOS and
+      # macOS. Keep both legs alive so a regression on one platform
+      # doesn't mask the other.
+      fail-fast: false
+      matrix:
+        include:
+          - destination: "generic/platform=iOS"
+            platform_label: "iOS"
+          - destination: "generic/platform=macOS"
+            platform_label: "macOS"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+      - name: Build demo
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Examples/VirtualListDemo/VirtualListDemo.xcodeproj \
+            -scheme VirtualListDemo \
+            -destination '${{ matrix.destination }}' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
