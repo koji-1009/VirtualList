@@ -233,14 +233,23 @@ func vlTwin(of listName: String) -> String? {
 enum Section: String, CaseIterable {
   case rangeInit = "range"
   case collectionInit = "collection"
-  case update
+  case realisticInit = "realistic"
+  case heavyInit = "heavy"
+  case update = "update"
+  case realisticUpdate = "realistic-update"
+  case heavyUpdate = "heavy-update"
 
   static func classify(_ name: String) -> Section? {
-    if name.contains("updateList_") || name.contains("updateVirtualList_") {
+    let isUpdate = name.contains("updateList_") || name.contains("updateVirtualList_")
+    if isUpdate {
+      if name.contains("_realistic_") { return .realisticUpdate }
+      if name.contains("_heavy_") { return .heavyUpdate }
       return .update
     }
     if name.contains("_range_") { return .rangeInit }
     if name.contains("_collection_") { return .collectionInit }
+    if name.contains("_realistic_") { return .realisticInit }
+    if name.contains("_heavy_") { return .heavyInit }
     return nil
   }
 
@@ -248,7 +257,11 @@ enum Section: String, CaseIterable {
     switch self {
     case .rangeInit: "Initial render (Range shape, ms per render)"
     case .collectionInit: "Initial render (Array-of-Identifiable, ms per render)"
+    case .realisticInit: "Initial render (Realistic row — settings/mail shape, ms per render)"
+    case .heavyInit: "Initial render (Heavy row — social-timeline shape, ms per render)"
     case .update: "Per-update (single-item flip, ms per flip)"
+    case .realisticUpdate: "Per-update (realistic row, ms per flip)"
+    case .heavyUpdate: "Per-update (heavy row, ms per flip)"
     }
   }
 }

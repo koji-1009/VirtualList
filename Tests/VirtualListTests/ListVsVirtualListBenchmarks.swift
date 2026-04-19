@@ -206,6 +206,89 @@ final class ListVsVirtualListBenchmarks: XCTestCase {
     .virtualListUpdatePolicy(.indexed)
   }
 
+  // MARK: - Realistic shape
+  //
+  // The `_range_` / `_collection_` tests above use a single `Text` per
+  // row. That's a useful wrapper-overhead microbenchmark, but it's also
+  // the shape that flatters `SwiftUI.List` most — its per-row private-
+  // hosting fast path dominates when there's almost no body to render.
+  // Real app rows are heavier: leading icon, primary + secondary text,
+  // trailing metadata. The `_realistic_*` and `_heavy_*` suites below
+  // measure VirtualList vs List under that shape so the README can
+  // report both the wrapper-limited case and the content-limited case.
+  //
+  // Each realistic / heavy row type is a concrete `View` with deterministic
+  // content so the measurement has no data-fetch variance.
+
+  func test_list_realistic_10() {
+    measureRender { ListRealisticView(count: 10) }
+  }
+
+  func test_virtualList_realistic_10() {
+    measureRender { VirtualListRealisticView(count: 10) }
+  }
+
+  func test_list_realistic_100() {
+    measureRender { ListRealisticView(count: 100) }
+  }
+
+  func test_virtualList_realistic_100() {
+    measureRender { VirtualListRealisticView(count: 100) }
+  }
+
+  func test_list_realistic_1k() {
+    measureRender { ListRealisticView(count: 1_000) }
+  }
+
+  func test_virtualList_realistic_1k() {
+    measureRender { VirtualListRealisticView(count: 1_000) }
+  }
+
+  func test_list_heavy_10() {
+    measureRender { ListHeavyView(count: 10) }
+  }
+
+  func test_virtualList_heavy_10() {
+    measureRender { VirtualListHeavyView(count: 10) }
+  }
+
+  func test_list_heavy_100() {
+    measureRender { ListHeavyView(count: 100) }
+  }
+
+  func test_virtualList_heavy_100() {
+    measureRender { VirtualListHeavyView(count: 100) }
+  }
+
+  func test_list_heavy_1k() {
+    measureRender { ListHeavyView(count: 1_000) }
+  }
+
+  func test_virtualList_heavy_1k() {
+    measureRender { VirtualListHeavyView(count: 1_000) }
+  }
+
+  // Per-update flip on the same realistic / heavy shapes. N=100 picks
+  // the case where the wrapper-limited `_range_` update is closest
+  // (tied) — the realistic / heavy rows should shift further in
+  // `VirtualList`'s favour once content cost joins wrapper cost.
+
+  func test_updateList_realistic_100() {
+    measureUpdate(count: 100) { RealisticUpdateListView(store: $0) }
+  }
+
+  func test_updateVirtualList_realistic_100() {
+    measureUpdate(count: 100) { RealisticUpdateVirtualListView(store: $0) }
+  }
+
+  func test_updateList_heavy_100() {
+    measureUpdate(count: 100) { HeavyUpdateListView(store: $0) }
+  }
+
+  func test_updateVirtualList_heavy_100() {
+    measureUpdate(count: 100) { HeavyUpdateVirtualListView(store: $0) }
+  }
+
   // MARK: - Sample data
 
   struct Row: Identifiable {
