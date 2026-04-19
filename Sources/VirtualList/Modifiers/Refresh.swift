@@ -19,7 +19,11 @@ import SwiftUI
   // than let the call silently no-op on macOS, make it fail at compile
   // time with an explanatory message so the drop-in contract never
   // misleads.
-  @available(macOS, unavailable, message: "Pull-to-refresh is iOS-only; AppKit has no equivalent gesture. Drive refresh from a toolbar / menu button on macOS.")
+  @available(
+    macOS, unavailable,
+    message:
+      "Pull-to-refresh is iOS-only; AppKit has no equivalent gesture. Drive refresh from a toolbar / menu button on macOS."
+  )
   extension VirtualList {
     public func virtualListRefreshable(
       _ action: @escaping @Sendable () async -> Void

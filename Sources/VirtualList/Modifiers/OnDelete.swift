@@ -1,24 +1,11 @@
 import SwiftUI
 
 extension VirtualList {
-  /// List-level delete handler. Mirrors
-  /// `SwiftUI.ForEach.onDelete(perform:)`: the closure fires with an
-  /// `IndexSet` containing the affected row's position within its
-  /// section.
+  /// List-level delete handler. Mirrors `SwiftUI.ForEach.onDelete(perform:)`.
   ///
-  /// Surface differs by platform because the idiomatic delete
-  /// affordance does:
-  ///
-  /// - **iOS / Catalyst**: a default destructive trailing-swipe
-  ///   "Delete" action is rendered for each row. Priority order for
-  ///   the trailing-swipe provider is: per-row `.swipeActions { ... }`
-  ///   → list-level `.virtualListSwipeActions(edge: .trailing, ...)`
-  ///   → this `.onDelete` default. If a caller wires both
-  ///   `.onDelete` and a custom trailing swipe provider, the custom
-  ///   provider wins — matching SwiftUI's precedence.
-  /// - **macOS**: the ⌫ (Delete) key on the focused row fires the
-  ///   handler. Multi-selection deletes surface every selected
-  ///   row's index in the `IndexSet`.
+  /// On iOS the default trailing-swipe "Delete" action fires it (overridden
+  /// by a more-specific `.swipeActions` if set). On macOS the ⌫ key on the
+  /// selection fires it.
   public func onDelete(
     perform action: @escaping @MainActor (IndexSet) -> Void
   ) -> VirtualList {

@@ -191,15 +191,16 @@ public struct ListComparisonExample: View {
   private static func thumbnail(for index: Int) -> CGImage? {
     let side = 64
     let space = CGColorSpaceCreateDeviceRGB()
-    guard let ctx = CGContext(
-      data: nil,
-      width: side,
-      height: side,
-      bitsPerComponent: 8,
-      bytesPerRow: side * 4,
-      space: space,
-      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )
+    guard
+      let ctx = CGContext(
+        data: nil,
+        width: side,
+        height: side,
+        bitsPerComponent: 8,
+        bytesPerRow: side * 4,
+        space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      )
     else { return nil }
 
     let (r1, g1, b1) = hsbToRGB(
@@ -216,11 +217,12 @@ public struct ListComparisonExample: View {
       CGColor(red: r1, green: g1, blue: b1, alpha: 1),
       CGColor(red: r2, green: g2, blue: b2, alpha: 1),
     ]
-    guard let gradient = CGGradient(
-      colorsSpace: space,
-      colors: colors as CFArray,
-      locations: [0, 1]
-    )
+    guard
+      let gradient = CGGradient(
+        colorsSpace: space,
+        colors: colors as CFArray,
+        locations: [0, 1]
+      )
     else { return nil }
     ctx.drawLinearGradient(
       gradient,

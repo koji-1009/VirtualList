@@ -115,7 +115,11 @@ import SwiftUI
   // let the call silently no-op on macOS, mark the surface as
   // `@available(macOS, unavailable)` so a `s/List/VirtualList/g`
   // migration fails at compile time with an explanatory message.
-  @available(macOS, unavailable, message: "Swipe actions are iOS-only; AppKit has no swipe gesture for list rows. Use a context menu (`.contextMenu { ... }`) on macOS instead.")
+  @available(
+    macOS, unavailable,
+    message:
+      "Swipe actions are iOS-only; AppKit has no swipe gesture for list rows. Use a context menu (`.contextMenu { ... }`) on macOS instead."
+  )
   public struct VirtualListSwipeAction {
     public enum Style: Sendable {
       case normal
@@ -134,7 +138,10 @@ import SwiftUI
     case trailing
   }
 
-  @available(macOS, unavailable, message: "Swipe actions are iOS-only; AppKit has no swipe gesture for list rows.")
+  @available(
+    macOS, unavailable,
+    message: "Swipe actions are iOS-only; AppKit has no swipe gesture for list rows."
+  )
   extension VirtualList {
     public func virtualListSwipeActions(
       edge: VirtualListSwipeEdge,

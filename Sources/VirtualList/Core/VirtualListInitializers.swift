@@ -68,20 +68,13 @@ extension VirtualList {
   }
 }
 
-// MARK: - List-compatible selection initializers
+// MARK: - `VirtualListRow`-returning initializers
 //
-// These mirror `SwiftUI.List(_:id:selection:rowContent:)` so a caller can
-// swap `List` → `VirtualList` without splitting the selection binding off
-// into a trailing `.virtualListSelection(_:)` modifier.
-
-// MARK: - VirtualListRow-returning initializers
-//
-// These overloads accept a rowContent closure whose return type conforms
-// to `VirtualListRow`. Returning a `VirtualListRow` is how callers opt
-// into the per-row modifier API (e.g. `.swipeActions { ... }` at the row
-// level). Swift's overload resolution prefers these when the closure's
-// return type satisfies `VirtualListRow`; plain `some View` closures fall
-// through to the generic `some View` initializers defined above.
+// Overloads that take a `rowContent` returning a concrete `VirtualListRow`.
+// Swift's overload resolution picks these when the closure's return type
+// conforms; otherwise callers fall through to the plain `some View`
+// initializers above. Returning a `VirtualListRow` is how a caller opts
+// into the per-row modifier dispatch.
 
 extension VirtualList {
   public init<Data: RandomAccessCollection, Row: VirtualListRow>(
@@ -107,6 +100,12 @@ extension VirtualList {
     self.init(itemCount: itemCount, id: id, content: rowContent)
   }
 }
+
+// MARK: - Selection-carrying initializers
+//
+// Mirror `SwiftUI.List(_:id:selection:rowContent:)` so a `List → VirtualList`
+// migration doesn't have to split the selection binding into a separate
+// `.virtualListSelection(_:)` modifier.
 
 extension VirtualList {
   /// Collection-based with an explicit id key path and a single-selection

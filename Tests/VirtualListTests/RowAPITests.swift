@@ -7,12 +7,11 @@ import Testing
   import UIKit
 #endif
 
-/// Exercises the `VirtualListRow` protocol and its namespaced
-/// `.swipeActions` extension. Swift's method lookup prefers the
-/// `VirtualListRow` extension over `SwiftUI.View.swipeActions` on any
-/// receiver that conforms to `VirtualListRow`, so `.swipeActions { ... }`
-/// written with `VirtualListSwipeAction` expressions dispatches to the
-/// list-aware implementation.
+/// Compile-level guard on `VirtualListRow` modifier dispatch. Each test
+/// compiles only because Swift's method lookup picks the `VirtualListRow`
+/// extension over `SwiftUI.View`'s equivalent; a regression that drops
+/// the protocol extension would silently fall through to SwiftUI's
+/// (which is a no-op inside `VirtualList`).
 @Suite("VirtualListRow protocol")
 @MainActor
 struct VirtualListRowProtocolTests {
@@ -38,28 +37,18 @@ struct VirtualListRowProtocolTests {
 
   #if canImport(UIKit)
     @Test func listRowBackgroundExtensionIsCallableOnRow() {
-      // Compiles because `.listRowBackground` resolves against the
-      // `VirtualListRow` extension (which returns `some View` from a
-      // `<V: View>` input), not `SwiftUI.View.listRowBackground(_:)`.
-      // A regression that drops the protocol extension would shadow to
-      // SwiftUI's version and silently no-op inside VirtualList.
       let wrapped = VirtualListRowContainer { Text("x") }
         .listRowBackground(Color.blue)
       _ = wrapped
     }
 
     @Test func listRowBackgroundAcceptsNilToClear() {
-      // Explicit `nil` passes the optional-background overload path
-      // and returns the content unchanged (no `.background` wrap).
       let wrapped = VirtualListRowContainer { Text("x") }
         .listRowBackground(nil as Color?)
       _ = wrapped
     }
 
     @Test func listRowInsetsExtensionIsCallableOnRow() {
-      // Compiles because `.listRowInsets` resolves against the
-      // `VirtualListRow` extension — Swift picks the more specific
-      // protocol over `SwiftUI.View.listRowInsets(_:)`.
       let wrapped = VirtualListRowContainer { Text("x") }
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
       _ = wrapped
@@ -84,25 +73,14 @@ struct VirtualListRowProtocolTests {
     }
 
     @Test func swipeActionsExtensionIsCallableOnRow() {
-      // The call compiles because `.swipeActions` is resolved against the
-      // `VirtualListRow` extension (which takes `VirtualListSwipeAction`
-      // in its builder), not `SwiftUI.View.swipeActions` (which takes a
-      // `ViewBuilder`). The two signatures can't ambiguate because the
-      // builder parameter types differ.
       let wrapped = VirtualListRowContainer { Text("x") }
         .swipeActions {
           VirtualListSwipeAction(title: "Delete", style: .destructive) { _ in }
         }
-      // The returned type carries our modifier.
       _ = wrapped
     }
 
     @Test func listRowSeparatorExtensionIsCallableOnRow() {
-      // Swift should pick the `VirtualListRow` extension over
-      // `SwiftUI.View.listRowSeparator(_:edges:)`. If a regression drops
-      // the protocol extension, the `View` one silently no-ops inside
-      // VirtualList (SwiftUI's preference keys aren't visible from
-      // outside the framework).
       let wrapped = VirtualListRowContainer { Text("x") }
         .listRowSeparator(.hidden)
       _ = wrapped

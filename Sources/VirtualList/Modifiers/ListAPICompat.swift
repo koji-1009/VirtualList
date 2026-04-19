@@ -1,17 +1,10 @@
 import SwiftUI
 
-/// Drop-in-compatible aliases for the common `SwiftUI.List` modifiers.
-///
-/// These let a caller swap `List` → `VirtualList` and keep the same modifier
-/// names (`.listStyle`, `.refreshable`, `.listRowSeparator`, `.onMove`) for
-/// list-level behaviour. Each alias forwards to the namespaced `virtualList*`
-/// method so the single source of truth stays in the configuration.
-///
-/// Per-row modifiers that `SwiftUI.List` picks up through private preference
-/// keys (`.swipeActions`, `.listRowBackground`, `.listRowInsets`,
-/// `.listRowSeparator` applied to individual rows) are *not* intercepted here;
-/// callers that need those continue to use the explicit
-/// `.virtualListSwipeActions(edge:actions:)` form, which is list-level.
+/// List-level drop-in aliases for the common `SwiftUI.List` modifiers
+/// (`.listStyle`, `.listRowSeparator`, `.refreshable`, `.onMove`). Each alias
+/// forwards to the namespaced `virtualList*` method so configuration stays
+/// single-sourced. Per-row modifiers live in `RowAPI.swift` and dispatch via
+/// the `VirtualListRow` protocol.
 extension VirtualList {
   /// Sets the list style. Mirrors `SwiftUI.View.listStyle(_:)` but accepts
   /// `VirtualListStyle` rather than `SwiftUI.ListStyle` because the protocol's
@@ -53,7 +46,11 @@ extension VirtualList {
     }
   }
 #else
-  @available(macOS, unavailable, message: "Pull-to-refresh is iOS-only; AppKit has no equivalent gesture. Drive refresh from a toolbar / menu button on macOS.")
+  @available(
+    macOS, unavailable,
+    message:
+      "Pull-to-refresh is iOS-only; AppKit has no equivalent gesture. Drive refresh from a toolbar / menu button on macOS."
+  )
   extension VirtualList {
     public func refreshable(
       action: @escaping @Sendable () async -> Void

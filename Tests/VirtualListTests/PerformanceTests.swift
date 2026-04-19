@@ -371,8 +371,7 @@ final class VirtualListPerformanceGates: XCTestCase {
       withExtendedLifetime(window) {}
     #endif
 
-    let seconds = Double(elapsed.components.seconds) +
-      Double(elapsed.components.attoseconds) / 1e18
+    let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
     return seconds / Double(iterations)
   }
 
@@ -386,7 +385,6 @@ final class VirtualListPerformanceGates: XCTestCase {
     coord.tearDown(collectionView: cv)
   }
 }
-
 
 /// Trend-tracking benchmarks. Use `measure { }` so Xcode captures a baseline
 /// per run; read the numbers off by eye to spot drift. CI skips this suite

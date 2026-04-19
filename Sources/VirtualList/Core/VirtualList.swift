@@ -53,13 +53,11 @@ public struct VirtualList {
       return collectionView
     }
 
-    /// Called by SwiftUI when the representable is removed from the view tree.
-    ///
-    /// SwiftUI would eventually release the coordinator on its own, but in practice
-    /// the diffable data source can keep the collection view alive until its
-    /// internal snapshot is drained, and the environment-override closures hold
-    /// onto user `ObservableObject`s for longer than expected. Nulling references
-    /// here makes the cleanup deterministic.
+    /// Drops the coordinator's strong references on removal from the view
+    /// tree. SwiftUI would eventually release them on its own, but the
+    /// diffable data source can hold the collection view alive past the
+    /// dismiss, and environment-override closures retain user
+    /// `ObservableObject`s; tearing down here makes cleanup deterministic.
     public static func dismantleUIView(
       _ uiView: UICollectionView,
       coordinator: VirtualListCoordinator
@@ -112,11 +110,8 @@ public struct VirtualList {
       previous.style != next.style || previous.gridColumns != next.gridColumns
     }
 
-    /// Maps the user's `.scrollContentBackground(_:)` and
-    /// `.scrollDismissesKeyboard(_:)` configuration onto the concrete
-    /// `UICollectionView`. Called from both `makeUIView` (first
-    /// install) and `updateUIView` (state-change propagation) so the
-    /// two paths stay in sync.
+    /// Maps `.scrollContentBackground(_:)` / `.scrollDismissesKeyboard(_:)`
+    /// onto the collection view.
     private func applyScrollConfiguration(
       to collectionView: UICollectionView,
       from configuration: VirtualListConfiguration
@@ -145,15 +140,10 @@ public struct VirtualList {
       }
     }
 
-    /// Mirrors `\.editMode` into the collection view's `isEditing`
-    /// flag so SwiftUI-native edit-mode toggling — via
-    /// `.environment(\.editMode, $binding)` or an ancestor
-    /// `EditButton` — turns on the UIKit editing UX (inline delete
-    /// confirm button, reorder handles) on `VirtualList` the same
-    /// way it does on `SwiftUI.List`.
-    ///
-    /// `internal` rather than `private` so `@testable`-importing test
-    /// targets can exercise the mapping directly without standing up
+    /// Mirrors `\.editMode` into `UICollectionView.isEditing` so
+    /// `.environment(\.editMode, $binding)` / `EditButton` turns on
+    /// UIKit's editing UX (inline delete, reorder handles).
+    /// `internal` so `@testable` tests can exercise the mapping without
     /// a full SwiftUI host.
     func applyEditMode(
       to collectionView: UICollectionView,
@@ -185,12 +175,10 @@ public struct VirtualList {
         listConfig.headerMode = hasHeader ? .supplementary : .none
         listConfig.footerMode = hasFooter ? .supplementary : .none
         listConfig.showsSeparators = showsSeparators
-        // UICollectionLayoutListConfiguration is the correct place to wire up
-        // swipe actions for a compositional-layout list; the older
-        // `UICollectionViewDelegate` swipe methods don't fire for this layout.
-        // Per-row `.swipeActions` written via `VirtualListRow` take
-        // precedence; falls back to the list-level closure registered
-        // through `.virtualListSwipeActions(edge:actions:)`.
+        // Compositional-layout lists receive swipe actions through the
+        // config's own providers; `UICollectionViewDelegate`'s swipe
+        // methods do not fire here. Per-row `.swipeActions` on
+        // `VirtualListRow` outranks the list-level closure.
         listConfig.leadingSwipeActionsConfigurationProvider = { [weak coordinator] indexPath in
           if let cfg = coordinator?.swipeActionsConfiguration(for: indexPath, edge: .leading) {
             return cfg
@@ -226,12 +214,9 @@ public struct VirtualList {
     }
   }
 
-  /// `UICollectionView` subclass that notifies its coordinator when it
-  /// becomes window-attached. Used so `VirtualList.makeUIView` can skip
-  /// selection / refresh / focus resolution on the first-render critical
-  /// path — those steps need a responder chain / UIWindow, neither of
-  /// which exists until the view is attached. Mirrors the macOS
-  /// `VirtualListHostTableView` pattern.
+  /// `UICollectionView` subclass that defers selection / refresh /
+  /// focus resolution until `didMoveToWindow` — those steps need a
+  /// live responder chain that doesn't exist during `makeUIView`.
   final class VirtualListHostCollectionView: UICollectionView {
     weak var viewCoordinator: VirtualListCoordinator?
 

@@ -15,7 +15,10 @@ import Testing
 @Suite("List API compat (drop-in)")
 @MainActor
 struct ListAPICompatTests {
-  struct Row: Identifiable { let id: Int; let title: String }
+  struct Row: Identifiable {
+    let id: Int
+    let title: String
+  }
 
   @Test func listStyleAlias() {
     let vl = VirtualList([Row(id: 1, title: "a")]) { Text($0.title) }

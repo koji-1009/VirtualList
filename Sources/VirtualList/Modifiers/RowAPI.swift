@@ -47,30 +47,12 @@ public struct VirtualListRowContainer<Content: View>: VirtualListRow {
 
 // MARK: - Per-row state plumbing (cross-platform)
 
-/// Per-cell configuration slot. Row-level modifiers
-/// (`.swipeActions`, `.listRowBackground`, `.listRowInsets`,
-/// `.listRowSeparator`, `.badge`) write into fields of this class via
-/// their ViewModifier, and the platform coordinator reads the fields
-/// back to apply them to cell state.
-///
-/// Features split into two patterns by their integration:
-///
-/// - **Direct-read fields** (`leadingSwipeActions`,
-///   `trailingSwipeActions`) are consulted on demand by their
-///   platform-specific handlers (e.g. the iOS swipe provider) — no
-///   callback needed, the field is just read the next time the user
-///   interacts.
-///
-/// - **Callback slots** (`background`, `insets`, `separator`, `badge`)
-///   need cell state to be rebuilt when the modifier fires, because
-///   the value they control is baked into the cell at render time.
-///   Each slot stores `(value, onChange)`; the modifier writes `value`
-///   and fires `onChange`, letting the coordinator update the cell
-///   lazily.
+/// Per-row state bucket populated by row-level modifiers and read by
+/// the platform coordinator on cell configuration. Callback-backed
+/// fields (`Slot<Value>`) fire an `onChange` on commit so the
+/// coordinator can rebuild cell state lazily; direct-read fields are
+/// consulted on demand by their respective handlers.
 public final class VirtualListRowBox {
-  /// Paired state + change notification used by every callback-driven
-  /// per-row feature. Writing `value` fires `onChange` — that's the
-  /// core shape the generic `VirtualListRowSlotModifier` relies on.
   public struct Slot<Value> {
     public internal(set) var value: Value?
     var onChange: ((Value?) -> Void)?
@@ -81,28 +63,14 @@ public final class VirtualListRowBox {
     }
   }
 
-  // Background view rendered behind the row. iOS wires it through
-  // `UIBackgroundConfiguration.customView`; macOS wires it through
-  // `NSTableRowView`'s background.
   var background = Slot<AnyView>()
-
-  // Content insets. iOS applies via `UIHostingConfiguration.margins`;
-  // macOS applies via `NSTableCellView` padding constraints.
   var insets = Slot<EdgeInsets>()
-
-  // Per-row separator visibility. iOS reads via the layout's
-  // `itemSeparatorHandler`; macOS draws separators itself in a custom
-  // row view.
   var separator = Slot<VirtualListRowSeparatorVisibility>()
-
-  // Trailing badge content. iOS hosts via `UICellAccessory.customView`
-  // backed by `UIHostingController`; macOS hosts via `NSHostingView`
-  // pinned to the trailing edge of the cell.
   var badge = Slot<AnyView>()
 
   #if canImport(UIKit)
-    // Swipe actions — iOS-only (AppKit has no swipe gesture). Read on
-    // demand by the layout's swipe provider, no callback needed.
+    // AppKit has no swipe gesture for list rows, so swipe-action state
+    // is iOS-only.
     var leadingSwipeActions: [VirtualListSwipeAction] = []
     var trailingSwipeActions: [VirtualListSwipeAction] = []
   #endif
@@ -126,17 +94,10 @@ public struct VirtualListRowSeparatorVisibility: Equatable, Sendable {
   }
 }
 
-/// Lightweight value the coordinator injects into every cell's hosted
-/// view tree so row-level modifiers can locate (or lazily create) their
-/// `VirtualListRowBox` on demand.
-///
-/// Crucially, this provider does **not** own a box. Allocation is
-/// deferred to the point where a modifier's `.onAppear` actually fires
-/// — rows without any row-level modifier never materialise a box,
-/// never allocate the `onChange` closures that wire the coordinator
-/// callbacks, and never touch the `perRowBoxes` dictionary. That keeps
-/// the no-modifier path close to the cost it had before row-level
-/// infrastructure existed.
+/// Environment-injected resolver that lazily allocates the per-row
+/// `VirtualListRowBox` on first modifier fire. Rows with no row-level
+/// modifier never allocate a box and never touch the coordinator's
+/// `perRowBoxes` dictionary.
 public struct VirtualListRowBoxProvider {
   weak var coordinator: (any VirtualListRowBoxHost)?
   let indexPath: IndexPath
@@ -186,19 +147,8 @@ struct VirtualListRowSlotModifier<Value>: ViewModifier {
 // MARK: - Cross-platform row modifiers
 
 extension VirtualListRow {
-  /// Row-level background view. Mirrors
-  /// `SwiftUI.View.listRowBackground(_:)`. Passing `nil` explicitly
-  /// clears any previously-set background.
-  ///
-  /// - iOS / Catalyst: renders through
-  ///   `UIBackgroundConfiguration.customView`, so the declared
-  ///   background extends edge-to-edge past the hosting
-  ///   configuration's content margins.
-  /// - macOS: renders through `NSTableRowView`'s background fill,
-  ///   matching the cell's full width.
-  ///
-  /// Rows that never declare a background pay no extra cost: no
-  /// hosting controller is allocated for the row.
+  /// Row-level background view. Mirrors `SwiftUI.View.listRowBackground(_:)`.
+  /// `nil` clears any previously-set background.
   public func listRowBackground<V: View>(_ view: V?) -> some View {
     modifier(
       VirtualListRowSlotModifier(
@@ -208,14 +158,8 @@ extension VirtualListRow {
     )
   }
 
-  /// Row-level content insets. Mirrors
-  /// `SwiftUI.View.listRowInsets(_:)`. Passing `nil` restores the
-  /// list's default row padding.
-  ///
-  /// - iOS / Catalyst: `UIHostingConfiguration.margins(_:_:)` on the
-  ///   underlying cell.
-  /// - macOS: padding constraints on the hosted SwiftUI view inside
-  ///   the table cell.
+  /// Row-level content insets. Mirrors `SwiftUI.View.listRowInsets(_:)`.
+  /// `nil` restores the list's default row padding.
   public func listRowInsets(_ insets: EdgeInsets?) -> some View {
     modifier(
       VirtualListRowSlotModifier(
@@ -226,17 +170,9 @@ extension VirtualListRow {
   }
 
   /// Row-level separator visibility. Mirrors
-  /// `SwiftUI.View.listRowSeparator(_:edges:)`.
-  ///
-  /// - iOS / Catalyst: applied via
-  ///   `UICollectionLayoutListConfiguration.itemSeparatorHandler`.
-  /// - macOS: the custom row view hides the grid line for this row
-  ///   when `.hidden` is set.
-  ///
-  /// Edges not listed in `edges` fall back to `.automatic`, so
-  /// `.listRowSeparator(.hidden, edges: .bottom)` hides only the
-  /// bottom separator and leaves the top edge at the list's global
-  /// default.
+  /// `SwiftUI.View.listRowSeparator(_:edges:)`. Edges not listed in `edges`
+  /// fall back to `.automatic`, so `.listRowSeparator(.hidden, edges: .bottom)`
+  /// hides only the bottom separator.
   public func listRowSeparator(
     _ visibility: Visibility,
     edges: VerticalEdge.Set = .all

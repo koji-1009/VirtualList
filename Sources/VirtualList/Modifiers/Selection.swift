@@ -1,13 +1,10 @@
 import SwiftUI
 
-/// Type-erased container for the caller's selection binding.
-///
-/// The enum carries the fully-typed binding; the outer surface projects
-/// between it and the `Set<AnyHashable>` shape the data source operates on.
-/// Struct (not class) so each re-render's modifier chain doesn't heap-allocate
-/// a new box. Only the read/write methods are main-actor-isolated — the
-/// initializers are nonisolated so the modifier extension (which SwiftUI
-/// invokes during body evaluation) can construct the box from any context.
+/// Type-erased container that bridges the caller's typed binding to the
+/// `Set<AnyHashable>` shape the data source uses. Struct so the modifier
+/// chain doesn't heap-allocate per re-render; the read / write methods are
+/// `@MainActor` while the initializers stay nonisolated so SwiftUI's body
+/// evaluation can construct the box from any context.
 struct VirtualListSelectionBox<ID: Hashable>: VirtualListSelectionBoxProtocol {
   enum Source {
     case single(Binding<ID?>)

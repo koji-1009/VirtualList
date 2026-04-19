@@ -66,7 +66,11 @@ extension VirtualList {
   // meaningless on that platform. Mark the surface as
   // `@available(macOS, unavailable)` so a `s/List/VirtualList/g`
   // migration fails at compile time with an explanatory message.
-  @available(macOS, unavailable, message: "Keyboard-dismiss control is iOS-only; macOS has no on-screen keyboard that scroll gestures could dismiss.")
+  @available(
+    macOS, unavailable,
+    message:
+      "Keyboard-dismiss control is iOS-only; macOS has no on-screen keyboard that scroll gestures could dismiss."
+  )
   extension VirtualList {
     public func scrollDismissesKeyboard(
       _ mode: ScrollDismissesKeyboardMode

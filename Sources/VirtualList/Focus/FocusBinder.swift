@@ -7,18 +7,11 @@ import SwiftUI
   import AppKit
 #endif
 
-/// Internal bridge that lets a `VirtualListFocusCoordinator` ask `VirtualList` to
-/// scroll the focused row into view.
-///
-/// The binder installs a closure on the focus coordinator. When user code calls
-/// `focus(id:)` with a non-nil id, the closure runs with the type-erased item id
-/// and scrolls the collection view to it. Setting `coordinator.currentID` directly
-/// (without going through `focus(id:)`) does NOT trigger a scroll — that lets
-/// internal modifier plumbing update the published ID without side effects.
-///
-/// Platform-neutral: the binder doesn't know whether the attached collection
-/// view is `UICollectionView` or `NSTableView`. It just installs and removes
-/// a scroll-handler closure the coordinator provides.
+/// Bridge that lets a `VirtualListFocusCoordinator` ask the list to scroll
+/// the focused row into view. `focus(id:)` goes through a scroll handler the
+/// binder installs on the coordinator; setting `coordinator.currentID`
+/// directly is reserved for internal modifier updates and does *not*
+/// trigger a scroll.
 final class VirtualListFocusBinder<ID: Hashable>: VirtualListFocusBinderProtocol {
   private let focusCoordinator: VirtualListFocusCoordinator<ID>
 
