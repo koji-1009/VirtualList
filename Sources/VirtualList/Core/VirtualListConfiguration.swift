@@ -25,26 +25,27 @@ struct VirtualListConfiguration {
   var gridColumns: VirtualListGridColumns?
   var focusBinder: (any VirtualListFocusBinderProtocol)?
 
+  /// List-level delete handler registered through
+  /// `.onDelete(perform:)`. Matches SwiftUI's `ForEach.onDelete`
+  /// semantics: the coordinator invokes this closure with the
+  /// affected row's `IndexSet`. On iOS it materialises a default
+  /// destructive trailing-swipe action; on macOS it fires when the
+  /// user presses the Delete key on the selected row(s).
+  var onDelete: (@MainActor (IndexSet) -> Void)?
+
+  /// Scroll-content-background visibility, set through
+  /// `.scrollContentBackground(_:)`. `.hidden` keeps the
+  /// collection view's / scroll view's background clear so a
+  /// surrounding SwiftUI `.background(...)` shows through;
+  /// `.visible` installs the platform's default list background.
+  /// `nil` means "modifier wasn't used — preserve the current
+  /// behaviour" (clear).
+  var scrollContentBackground: Visibility?
+
   #if canImport(UIKit)
     var swipeActionsLeading: VirtualListSwipeActionsProvider?
     var swipeActionsTrailing: VirtualListSwipeActionsProvider?
     var refreshAction: (@Sendable () async -> Void)?
-    /// List-level delete handler registered through
-    /// `.onDelete(perform:)`. Matches SwiftUI's `ForEach.onDelete`
-    /// semantics — the coordinator materialises a default destructive
-    /// trailing-swipe action that invokes this closure with the
-    /// affected row's `IndexSet` when neither a per-row
-    /// `.swipeActions` nor a list-level
-    /// `.virtualListSwipeActions(trailing:)` is set.
-    var onDelete: (@MainActor (IndexSet) -> Void)?
-
-    /// Scroll-content-background visibility, set through
-    /// `.scrollContentBackground(_:)`. `.hidden` keeps the
-    /// collection view's background clear so a surrounding SwiftUI
-    /// `.background(...)` shows through; `.visible` installs the
-    /// platform's default list background. `nil` means "modifier
-    /// wasn't used — preserve the current behaviour" (clear).
-    var scrollContentBackground: Visibility?
 
     /// Keyboard-dismiss behaviour set through
     /// `.scrollDismissesKeyboard(_:)`. Maps to

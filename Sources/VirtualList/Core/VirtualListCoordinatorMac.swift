@@ -60,6 +60,24 @@
 
     private var lastAppliedFingerprint: [SectionFingerprint] = []
 
+    /// Per-IndexPath state shared by all row-level modifiers
+    /// (`.listRowBackground`, `.listRowInsets`, `.listRowSeparator`,
+    /// `.badge`). Populated lazily — only rows whose modifiers
+    /// actually fire get an entry, so the no-modifier case stays
+    /// allocation-free. Keyed by `IndexPath(item: index, section:
+    /// section)` so it matches the UIKit coordinator's dict keys and
+    /// the `VirtualListRowBoxProvider` contract.
+    private var perRowBoxes: [IndexPath: VirtualListRowBox] = [:]
+
+    /// Cached row-level state fired by modifier callbacks. Read on
+    /// cell re-configuration so a cell scrolled back into view or
+    /// rebuilt after a non-structural update doesn't flicker through
+    /// an undecorated default.
+    private var perRowBackgroundViews: [IndexPath: AnyView] = [:]
+    private var perRowInsets: [IndexPath: EdgeInsets] = [:]
+    private var perRowBadgeViews: [IndexPath: AnyView] = [:]
+    private var perRowSeparatorVisibility: [IndexPath: VirtualListRowSeparatorVisibility] = [:]
+
     /// Increments each time the cell registration builds a cell. Exposed to
     /// tests / benchmarks via `@testable import`; not part of the public API.
     private(set) var cellBuildCount: Int = 0
@@ -154,6 +172,17 @@
       guard structureChanged else { return .unchanged }
       let delta = tailDelta(from: oldFingerprint, to: fingerprint)
       lastAppliedFingerprint = fingerprint
+
+      // Structural change invalidates per-row state keyed by
+      // IndexPath — an inserted row shifts every row after it, so
+      // entries keyed by the old paths no longer describe the
+      // intended rows. Modifier `.onAppear` callbacks repopulate the
+      // entries for rows that still exist.
+      perRowBoxes.removeAll(keepingCapacity: true)
+      perRowBackgroundViews.removeAll(keepingCapacity: true)
+      perRowInsets.removeAll(keepingCapacity: true)
+      perRowBadgeViews.removeAll(keepingCapacity: true)
+      perRowSeparatorVisibility.removeAll(keepingCapacity: true)
 
       rebuildOffsets()
       // `.diffed` promises O(1) id-to-indexPath lookup, parity with
@@ -259,6 +288,23 @@
       totalRowCount = row
     }
 
+    /// Groups a set of flat `NSTableView` row indices (as reported by
+    /// `selectedRowIndexes`) into per-section `IndexSet`s keyed by
+    /// section index. Header / footer rows are filtered out. Used by
+    /// the Delete-key handler to fire `.onDelete` once per affected
+    /// section — mirrors SwiftUI's `ForEach.onDelete`, which also
+    /// reports item indices within the enclosing section.
+    func itemIndexSetsForDelete(from rows: IndexSet) -> [(section: Int, items: IndexSet)] {
+      var bySectionIndex: [Int: IndexSet] = [:]
+      for row in rows {
+        guard case let .item(section, index) = rowKind(at: row) else { continue }
+        bySectionIndex[section, default: IndexSet()].insert(index)
+      }
+      return bySectionIndex
+        .sorted(by: { $0.key < $1.key })
+        .map { (section: $0.key, items: $0.value) }
+    }
+
     /// Maps a flat table row to a `RowKind`. O(log sections) via binary
     /// search over `sectionRowInfo`.
     func rowKind(at row: Int) -> RowKind? {
@@ -303,7 +349,37 @@
         // value. The hosting view's autoresizing mask then keeps the
         // SwiftUI content bounded to the row frame, so no per-cell
         // `.frame(height:)` wrapper is needed.
-        cell.host(decorate(view: sections[section].itemView(index)))
+        let indexPath = IndexPath(item: index, section: section)
+        // Re-dequeue may hand us a cell that last rendered a different
+        // IndexPath; clear any row-API decorations from that previous
+        // use before re-installing this IndexPath's cached state.
+        cell.resetRowDecorations()
+        // Inject the lightweight provider so `.listRowBackground` /
+        // `.listRowInsets` / `.listRowSeparator` / `.badge` modifier
+        // `.onAppear`s can lazily allocate a `VirtualListRowBox` for
+        // this row. Zero cost for rows that never declare any
+        // row-level modifier — no box allocation, no dict entry.
+        let provider = VirtualListRowBoxProvider(
+          coordinator: self,
+          indexPath: indexPath
+        )
+        let raw = sections[section].itemView(index)
+        let hosted = decorate(view: raw)
+          .environment(\.virtualListRowBoxProvider, provider)
+        cell.host(AnyView(hosted))
+        // Apply any cached state captured on a prior modifier fire for
+        // this IndexPath. New rows have empty caches; scroll-back and
+        // reconfigure paths restore what the modifier already committed.
+        if let cached = perRowBackgroundViews[indexPath] {
+          cell.setBackgroundContent(cached)
+        }
+        if let cached = perRowBadgeViews[indexPath] {
+          cell.setBadgeContent(cached)
+        }
+        if let insets = perRowInsets[indexPath] {
+          cell.contentInsets = insets
+        }
+        applySeparatorState(cell, for: indexPath, in: section, itemIndex: index)
       case .header(let section):
         if let builder = sections[section].header {
           cell.host(decorate(view: builder()))
@@ -340,6 +416,171 @@
         {
           configureCell(cell, at: row)
         }
+      }
+    }
+
+    // MARK: - Per-row modifier plumbing (macOS)
+
+    /// Test hooks — reachable via `@testable import` so the plumbing
+    /// can be exercised end-to-end without standing up a real SwiftUI
+    /// host. Not part of the public API.
+    func debug_perRowBox(at indexPath: IndexPath) -> VirtualListRowBox? {
+      perRowBoxes[indexPath]
+    }
+
+    func debug_perRowBackgroundView(at indexPath: IndexPath) -> AnyView? {
+      perRowBackgroundViews[indexPath]
+    }
+
+    func debug_perRowBadgeView(at indexPath: IndexPath) -> AnyView? {
+      perRowBadgeViews[indexPath]
+    }
+
+    func debug_perRowInsets(at indexPath: IndexPath) -> EdgeInsets? {
+      perRowInsets[indexPath]
+    }
+
+    func debug_perRowSeparatorVisibility(
+      at indexPath: IndexPath
+    ) -> VirtualListRowSeparatorVisibility? {
+      perRowSeparatorVisibility[indexPath]
+    }
+
+    /// Allocates (or returns) the per-row box for an IndexPath. Called
+    /// from a row modifier's `.onAppear` via the environment-injected
+    /// `VirtualListRowBoxProvider`. The heavy work — class allocation,
+    /// dict insertion, callback closure allocation — only runs here,
+    /// so rows that never declare a row-level modifier skip it
+    /// entirely and pay nothing beyond the environment struct.
+    func ensureRowBox(at indexPath: IndexPath) -> VirtualListRowBox {
+      if let existing = perRowBoxes[indexPath] {
+        return existing
+      }
+      let fresh = VirtualListRowBox()
+      fresh.background.onChange = { [weak self] newBackground in
+        self?.applyRowBackground(newBackground, at: indexPath)
+      }
+      fresh.insets.onChange = { [weak self] newInsets in
+        self?.applyRowInsets(newInsets, at: indexPath)
+      }
+      fresh.separator.onChange = { [weak self] newVisibility in
+        self?.applyRowSeparatorVisibility(newVisibility, at: indexPath)
+      }
+      fresh.badge.onChange = { [weak self] newBadge in
+        self?.applyRowBadge(newBadge, at: indexPath)
+      }
+      perRowBoxes[indexPath] = fresh
+      return fresh
+    }
+
+    /// Maps an `IndexPath` (the shape `VirtualListRowBox` uses) back
+    /// to the flat `NSTableView` row the modifier's target lives at.
+    /// Returns `nil` when the IndexPath is out of bounds relative to
+    /// the current section layout — which happens naturally on
+    /// structural applies that shift row counts; the box dict is
+    /// cleared in `apply` before this gets reached.
+    private func tableRow(for indexPath: IndexPath) -> Int? {
+      guard indexPath.section < sectionRowInfo.count else { return nil }
+      let info = sectionRowInfo[indexPath.section]
+      guard indexPath.item < info.itemCount else { return nil }
+      return info.startRow + (info.hasHeader ? 1 : 0) + indexPath.item
+    }
+
+    private func cellForRow(_ indexPath: IndexPath) -> HostingTableCellView? {
+      guard let tableView,
+        let row = tableRow(for: indexPath)
+      else { return nil }
+      return tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+        as? HostingTableCellView
+    }
+
+    private func applyRowBackground(_ view: AnyView?, at indexPath: IndexPath) {
+      if let view {
+        perRowBackgroundViews[indexPath] = view
+      } else {
+        perRowBackgroundViews.removeValue(forKey: indexPath)
+      }
+      cellForRow(indexPath)?.setBackgroundContent(view)
+    }
+
+    private func applyRowInsets(_ insets: EdgeInsets?, at indexPath: IndexPath) {
+      let previous = perRowInsets[indexPath]
+      guard previous != insets else { return }
+      let resolved = insets ?? .init(top: 0, leading: 0, bottom: 0, trailing: 0)
+      if let insets {
+        perRowInsets[indexPath] = insets
+      } else {
+        perRowInsets.removeValue(forKey: indexPath)
+      }
+      if let cell = cellForRow(indexPath) {
+        cell.contentInsets = resolved
+        cell.needsLayout = true
+      }
+    }
+
+    private func applyRowBadge(_ view: AnyView?, at indexPath: IndexPath) {
+      if let view {
+        perRowBadgeViews[indexPath] = view
+      } else {
+        perRowBadgeViews.removeValue(forKey: indexPath)
+      }
+      if let cell = cellForRow(indexPath) {
+        cell.setBadgeContent(view)
+        cell.needsLayout = true
+      }
+    }
+
+    private func applyRowSeparatorVisibility(
+      _ visibility: VirtualListRowSeparatorVisibility?,
+      at indexPath: IndexPath
+    ) {
+      let previous = perRowSeparatorVisibility[indexPath]
+      guard previous != visibility else { return }
+      if let visibility {
+        perRowSeparatorVisibility[indexPath] = visibility
+      } else {
+        perRowSeparatorVisibility.removeValue(forKey: indexPath)
+      }
+      if let cell = cellForRow(indexPath) {
+        applySeparatorState(
+          cell,
+          for: indexPath,
+          in: indexPath.section,
+          itemIndex: indexPath.item
+        )
+      }
+    }
+
+    /// Resolves the effective top / bottom separator draw state for a
+    /// cell. Per-row overrides (from `.listRowSeparator(_:edges:)`)
+    /// win; otherwise the list-level `.virtualListRowSeparators` flag
+    /// applies; otherwise the separator falls back to `true` for
+    /// non-last rows within a section (AppKit's usual default).
+    private func applySeparatorState(
+      _ cell: HostingTableCellView,
+      for indexPath: IndexPath,
+      in section: Int,
+      itemIndex: Int
+    ) {
+      let listDefault = configuration.rowSeparators ?? true
+      let override = perRowSeparatorVisibility[indexPath]
+      let topVisibility = resolveSeparatorVisibility(override?.top, fallback: false)
+      // Bottom separator shows by default between adjacent items
+      // within a section, unless the list-level flag is off or this
+      // is the last item in its section.
+      let sectionItemCount = section < sections.count ? sections[section].itemCount : 0
+      let isLastItemInSection = itemIndex == sectionItemCount - 1
+      let bottomFallback = listDefault && !isLastItemInSection
+      let bottomVisibility = resolveSeparatorVisibility(override?.bottom, fallback: bottomFallback)
+      cell.setSeparator(top: topVisibility, bottom: bottomVisibility)
+    }
+
+    private func resolveSeparatorVisibility(_ value: Visibility?, fallback: Bool) -> Bool {
+      switch value {
+      case .visible: true
+      case .hidden: false
+      case .automatic, nil: fallback
+      case .some(_): fallback
       }
     }
 
@@ -415,6 +656,11 @@
       totalRowCount = 0
       lastAppliedFingerprint = []
       idIndex = nil
+      perRowBoxes.removeAll()
+      perRowBackgroundViews.removeAll()
+      perRowInsets.removeAll()
+      perRowBadgeViews.removeAll()
+      perRowSeparatorVisibility.removeAll()
       configuration = VirtualListConfiguration()
       tableView = nil
     }
@@ -461,6 +707,10 @@
       return idIndex?[itemID]
     }
   }
+
+  // MARK: - VirtualListRowBoxHost
+
+  extension VirtualListMacCoordinator: VirtualListRowBoxHost {}
 
   // MARK: - NSTableViewDataSource
 
@@ -527,21 +777,152 @@
   public final class HostingTableCellView: NSTableCellView {
     private var hostingView: NSHostingView<AnyView>?
 
+    // Per-row decoration views, populated on demand by the coordinator
+    // when the matching `VirtualListRow` modifier fires. Rows with no
+    // decorations pay nothing — these stay nil.
+    var backgroundHostingView: NSHostingView<AnyView>?
+    var badgeHostingView: NSHostingView<AnyView>?
+    var topSeparator: NSView?
+    var bottomSeparator: NSView?
+    var contentInsets: EdgeInsets = .init(top: 0, leading: 0, bottom: 0, trailing: 0)
+
     func host(_ content: AnyView) {
       if let existing = hostingView {
         existing.rootView = content
         return
       }
       let hosting = NSHostingView(rootView: content)
-      hosting.autoresizingMask = [.width, .height]
       hosting.frame = bounds
       addSubview(hosting)
       hostingView = hosting
     }
 
+    /// Installs (or updates) the SwiftUI view drawn behind the hosted
+    /// content — drives `.listRowBackground(_:)`. `nil` removes any
+    /// previously-installed background.
+    func setBackgroundContent(_ view: AnyView?) {
+      guard let view else {
+        backgroundHostingView?.removeFromSuperview()
+        backgroundHostingView = nil
+        return
+      }
+      if let existing = backgroundHostingView {
+        existing.rootView = view
+        return
+      }
+      let host = NSHostingView(rootView: view)
+      host.frame = bounds
+      // Insert behind the content hosting view if one is already
+      // attached; otherwise `addSubview` ordering puts it at z-index 0.
+      if let content = hostingView {
+        addSubview(host, positioned: .below, relativeTo: content)
+      } else {
+        addSubview(host)
+      }
+      backgroundHostingView = host
+    }
+
+    /// Installs (or updates) the SwiftUI view shown on the trailing
+    /// edge of the cell — drives `.badge(_:)`. `nil` removes it.
+    func setBadgeContent(_ view: AnyView?) {
+      guard let view else {
+        badgeHostingView?.removeFromSuperview()
+        badgeHostingView = nil
+        return
+      }
+      if let existing = badgeHostingView {
+        existing.rootView = view
+        return
+      }
+      let host = NSHostingView(rootView: view)
+      addSubview(host)
+      badgeHostingView = host
+    }
+
+    /// Sets the draw state of the row's top / bottom separator
+    /// hair-lines. A separator is installed lazily on first use.
+    func setSeparator(top: Bool, bottom: Bool) {
+      if top {
+        ensureSeparator(\.topSeparator)
+      } else {
+        topSeparator?.removeFromSuperview()
+        topSeparator = nil
+      }
+      if bottom {
+        ensureSeparator(\.bottomSeparator)
+      } else {
+        bottomSeparator?.removeFromSuperview()
+        bottomSeparator = nil
+      }
+    }
+
+    private func ensureSeparator(_ keyPath: ReferenceWritableKeyPath<HostingTableCellView, NSView?>) {
+      if self[keyPath: keyPath] != nil { return }
+      let line = NSView()
+      line.wantsLayer = true
+      line.layer?.backgroundColor = NSColor.separatorColor.cgColor
+      addSubview(line)
+      self[keyPath: keyPath] = line
+    }
+
     public override func layout() {
       super.layout()
-      hostingView?.frame = bounds
+      let paddedFrame = bounds.inset(by: contentInsets)
+      let badgeWidth: CGFloat
+      if let badge = badgeHostingView {
+        let size = badge.fittingSize
+        badgeWidth = size.width
+        // Trail-aligned, vertically centered in the padded area.
+        let y = paddedFrame.midY - size.height / 2
+        badge.frame = NSRect(
+          x: paddedFrame.maxX - size.width,
+          y: y,
+          width: size.width,
+          height: size.height
+        )
+      } else {
+        badgeWidth = 0
+      }
+      let contentTrailing = paddedFrame.maxX - badgeWidth - (badgeWidth > 0 ? 8 : 0)
+      hostingView?.frame = NSRect(
+        x: paddedFrame.minX,
+        y: paddedFrame.minY,
+        width: max(0, contentTrailing - paddedFrame.minX),
+        height: paddedFrame.height
+      )
+      backgroundHostingView?.frame = bounds
+      let separatorHeight: CGFloat = 1.0 / (window?.backingScaleFactor ?? 1)
+      topSeparator?.frame = NSRect(x: 0, y: bounds.maxY - separatorHeight, width: bounds.width, height: separatorHeight)
+      bottomSeparator?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: separatorHeight)
+    }
+
+    /// Resets the cell's row-API decorations so a re-dequeue lands on a
+    /// clean baseline. The coordinator calls this from `configureCell`
+    /// before applying any per-IndexPath cached state so a cell that
+    /// was previously the receiver for a decorated row doesn't carry
+    /// those decorations into an undecorated reuse.
+    func resetRowDecorations() {
+      setBackgroundContent(nil)
+      setBadgeContent(nil)
+      setSeparator(top: false, bottom: false)
+      contentInsets = .init(top: 0, leading: 0, bottom: 0, trailing: 0)
+      needsLayout = true
+    }
+  }
+
+  private extension NSRect {
+    /// Inset variant that speaks SwiftUI's `EdgeInsets` (which is
+    /// leading/trailing rather than left/right). This is a reading-
+    /// order-agnostic inset — the macOS path currently does not honour
+    /// RTL layouts here, matching `SwiftUI.List` on macOS which also
+    /// draws left-to-right regardless of writing direction.
+    func inset(by insets: EdgeInsets) -> NSRect {
+      NSRect(
+        x: origin.x + insets.leading,
+        y: origin.y + insets.bottom,
+        width: max(0, size.width - insets.leading - insets.trailing),
+        height: max(0, size.height - insets.top - insets.bottom)
+      )
     }
   }
 
@@ -560,6 +941,39 @@
       guard window != nil else { return }
       macCoordinator?.didAttachToWindow()
     }
+
+    /// Routes ⌫ (Delete) / forward-delete on the selected row(s)
+    /// into the coordinator's `.onDelete` handler. The AppKit
+    /// equivalent of iOS's swipe-to-delete — matches what AppKit
+    /// users expect when a single row is focused and they press
+    /// the Delete key. A selection that spans multiple sections
+    /// fires the handler once per section with the item indices
+    /// relative to that section, matching SwiftUI's
+    /// `ForEach.onDelete` semantics.
+    ///
+    /// Falls back to `super` when `.onDelete` isn't set or the
+    /// event isn't a delete key, so default AppKit behaviour (e.g.
+    /// type-select) stays intact.
+    override func keyDown(with event: NSEvent) {
+      guard let characters = event.charactersIgnoringModifiers,
+        characters.unicodeScalars.contains(where: { scalar in
+          scalar == "\u{7F}"  // delete (backspace)
+            || scalar == "\u{F728}"  // forward delete
+        }),
+        let coordinator = macCoordinator,
+        let handler = coordinator.configuration.onDelete
+      else {
+        super.keyDown(with: event)
+        return
+      }
+      let rows = selectedRowIndexes
+      let grouped = coordinator.itemIndexSetsForDelete(from: rows)
+      guard !grouped.isEmpty else {
+        super.keyDown(with: event)
+        return
+      }
+      for (_, items) in grouped { handler(items) }
+    }
   }
 
   // MARK: - VirtualList NSViewRepresentable
@@ -577,8 +991,8 @@
       scrollView.documentView = tableView
       scrollView.hasVerticalScroller = true
       scrollView.hasHorizontalScroller = false
-      scrollView.drawsBackground = false
       scrollView.autohidesScrollers = true
+      applyScrollConfiguration(to: scrollView, from: configuration)
 
       context.coordinator.configuration = configuration
       context.coordinator.install(on: tableView)
@@ -602,6 +1016,7 @@
       let coordinator = context.coordinator
       coordinator.configuration = configuration
       coordinator.refreshRowSizing(on: tableView)
+      applyScrollConfiguration(to: scrollView, from: configuration)
       let outcome = coordinator.apply(
         sections: sections,
         animated: !context.transaction.disablesAnimations
@@ -615,6 +1030,39 @@
       // re-dequeues every visible row itself on the next layout pass there.
       if outcome != .reloaded {
         coordinator.reconfigureVisibleCells()
+      }
+    }
+
+    /// Maps `.scrollContentBackground(_:)` onto `NSScrollView`'s
+    /// drawing flags. `.hidden` / `.automatic` keep the scroll
+    /// surface transparent so a surrounding SwiftUI `.background(...)`
+    /// shows through (matching `VirtualList`'s historical default);
+    /// `.visible` enables drawing against
+    /// `NSColor.windowBackgroundColor`, the AppKit analogue to iOS's
+    /// `systemBackground`. Idempotency-guarded so `updateNSView`
+    /// doesn't churn property setters on every SwiftUI update.
+    private func applyScrollConfiguration(
+      to scrollView: NSScrollView,
+      from configuration: VirtualListConfiguration
+    ) {
+      let targetDraws: Bool
+      let targetBackground: NSColor
+      switch configuration.scrollContentBackground {
+      case .visible:
+        targetDraws = true
+        targetBackground = .windowBackgroundColor
+      case .hidden, .automatic, nil:
+        targetDraws = false
+        targetBackground = .clear
+      @unknown default:
+        targetDraws = false
+        targetBackground = .clear
+      }
+      if scrollView.drawsBackground != targetDraws {
+        scrollView.drawsBackground = targetDraws
+      }
+      if scrollView.backgroundColor != targetBackground {
+        scrollView.backgroundColor = targetBackground
       }
     }
   }

@@ -1,5 +1,6 @@
+import SwiftUI
+
 #if canImport(UIKit)
-  import SwiftUI
   import UIKit
 
   /// Declarative description of a single swipe action. Converted to a
@@ -90,27 +91,6 @@
       return copy
     }
 
-    /// List-level delete handler. Mirrors
-    /// `SwiftUI.ForEach.onDelete(perform:)` — a default destructive
-    /// trailing-swipe "Delete" action is rendered for each row, and
-    /// the closure fires with an `IndexSet` containing the deleted
-    /// row's position within its section.
-    ///
-    /// Priority order for the trailing-swipe provider:
-    /// 1. Per-row `.swipeActions { ... }` written on a `VirtualListRow`
-    /// 2. List-level `.virtualListSwipeActions(edge: .trailing, ...)`
-    /// 3. `.onDelete(perform:)` default destructive action (this)
-    ///
-    /// If a caller wires both `.onDelete` and a custom trailing swipe
-    /// provider, the custom provider wins — matching SwiftUI's
-    /// precedence.
-    public func onDelete(
-      perform action: @escaping @MainActor (IndexSet) -> Void
-    ) -> VirtualList {
-      var copy = self
-      copy.configuration.onDelete = action
-      return copy
-    }
   }
 
   /// Resolves UIKit's system-provided "Delete" localised title so the
@@ -126,4 +106,42 @@
       table: nil
     )
   }
+
+#else
+
+  // AppKit has no swipe gesture for list rows. `NSTableView` surfaces
+  // row-level actions through contextual menus or drag-and-drop, neither
+  // of which maps onto the `.virtualListSwipeActions` shape. Rather than
+  // let the call silently no-op on macOS, mark the surface as
+  // `@available(macOS, unavailable)` so a `s/List/VirtualList/g`
+  // migration fails at compile time with an explanatory message.
+  @available(macOS, unavailable, message: "Swipe actions are iOS-only; AppKit has no swipe gesture for list rows. Use a context menu (`.contextMenu { ... }`) on macOS instead.")
+  public struct VirtualListSwipeAction {
+    public enum Style: Sendable {
+      case normal
+      case destructive
+    }
+    public init(
+      title: String,
+      style: Style = .normal,
+      perform: @escaping @MainActor (IndexPath) -> Void
+    ) {}
+  }
+
+  @available(macOS, unavailable, message: "Swipe actions are iOS-only.")
+  public enum VirtualListSwipeEdge: Sendable {
+    case leading
+    case trailing
+  }
+
+  @available(macOS, unavailable, message: "Swipe actions are iOS-only; AppKit has no swipe gesture for list rows.")
+  extension VirtualList {
+    public func virtualListSwipeActions(
+      edge: VirtualListSwipeEdge,
+      actions: @escaping @MainActor (IndexPath) -> [VirtualListSwipeAction]
+    ) -> VirtualList {
+      self
+    }
+  }
+
 #endif

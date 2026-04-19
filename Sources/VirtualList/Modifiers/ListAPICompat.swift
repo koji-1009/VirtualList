@@ -52,6 +52,15 @@ extension VirtualList {
       virtualListRefreshable(action)
     }
   }
+#else
+  @available(macOS, unavailable, message: "Pull-to-refresh is iOS-only; AppKit has no equivalent gesture. Drive refresh from a toolbar / menu button on macOS.")
+  extension VirtualList {
+    public func refreshable(
+      action: @escaping @Sendable () async -> Void
+    ) -> VirtualList {
+      self
+    }
+  }
 #endif
 
 extension VirtualList {
