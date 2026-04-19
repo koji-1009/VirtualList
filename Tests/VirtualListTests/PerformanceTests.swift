@@ -260,7 +260,11 @@ final class VirtualListPerformanceGates: XCTestCase {
   /// regressed or `SwiftUI.List` fixed its O(N) walk (worth noticing).
   func test_gate_updateAtLargeNBeatsSwiftUIList() {
     let count = 100_000
-    let iterations = 10
+    // 20 measured iterations matches the per-test shape used by the
+    // trend benchmarks and is what the "8-36× margin" claim was
+    // calibrated against. Pair with the 10-flip warm-up inside
+    // `measureUpdateIterations` to keep the measurement steady-state.
+    let iterations = 20
 
     let listPerIter = measureSwiftUIListUpdatePerIteration(
       count: count,
@@ -326,6 +330,25 @@ final class VirtualListPerformanceGates: XCTestCase {
       window.contentView = host
       host.layoutSubtreeIfNeeded()
     #endif
+
+    // Warm-up: drain 10 flips through the harness so diffable-snapshot
+    // lazy init, host-controller property observers, Metal pipeline
+    // set-up, and cell-host recycling reach steady state before the
+    // measurement starts. Without this, the first handful of flips
+    // runs 10× slower than steady-state cost and the per-iter average
+    // mis-represents the shape of the update path. Applied symmetrically
+    // to `List` and `VirtualList` so the ratio stays fair — the gate
+    // is about per-flip cost, not first-flip setup cost.
+    for i in 0..<10 {
+      store.count = count + (i % 2)
+      #if canImport(UIKit)
+        host.view.layoutIfNeeded()
+        CATransaction.flush()
+      #elseif canImport(AppKit) && !targetEnvironment(macCatalyst)
+        host.needsLayout = true
+        host.layoutSubtreeIfNeeded()
+      #endif
+    }
 
     let clock = ContinuousClock()
     let elapsed = clock.measure {
